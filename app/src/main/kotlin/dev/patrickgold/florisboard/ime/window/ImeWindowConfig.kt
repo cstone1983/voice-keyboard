@@ -105,5 +105,17 @@ data class ImeWindowConfig(
             fixedMode = ImeWindowMode.Fixed.NORMAL,
             floatingMode = ImeWindowMode.Floating.NORMAL,
         )
+
+        /**
+         * Voice Keyboard: the config a screen shape starts with. Tablet-sized screens (an unfolded
+         * foldable) start split under the thumbs, like Gboard on a foldable; phones start normal. Once the
+         * user changes it, their choice is stored per shape and wins.
+         */
+        fun defaultFor(type: ImeFormFactor.Type): ImeWindowConfig = when (type) {
+            ImeFormFactor.Type.TABLET_PORTRAIT,
+            ImeFormFactor.Type.TABLET_LANDSCAPE,
+            ImeFormFactor.Type.LARGE_TABLET -> Default.copy(fixedMode = ImeWindowMode.Fixed.THUMBS)
+            else -> Default
+        }
     }
 }

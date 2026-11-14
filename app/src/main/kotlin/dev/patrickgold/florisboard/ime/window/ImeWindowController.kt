@@ -109,7 +109,7 @@ class ImeWindowController(
             prefs.keyboard.windowConfig.asFlow(),
         ) { rootInsets, windowConfigByType ->
             val typeGuess = rootInsets.formFactor.typeGuess
-            windowConfigByType[typeGuess] ?: ImeWindowConfig.Default
+            windowConfigByType[typeGuess] ?: ImeWindowConfig.defaultFor(typeGuess)
         }.collectIn(scope) { windowConfig ->
             activeWindowConfig.value = windowConfig
         }
