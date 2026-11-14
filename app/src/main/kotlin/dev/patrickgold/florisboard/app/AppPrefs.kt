@@ -730,7 +730,9 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         // not for realtime / live-prompt / multimodal / system voice input.
         val longformMode = enum(
             key = "dictate__longform_mode",
-            default = DictateLongformMode.OFF,
+            // Voice Keyboard: chunked dictation is the default, so a CPU-only server has most of the audio
+            // transcribed by the time the user stops talking.
+            default = DictateLongformMode.AUTO,
         )
         // Maximum silence (Pipecat Smart Turn stop_secs fallback) before AUTO mode cuts even when the
         // semantic classifier says the current thought may be incomplete.
@@ -744,6 +746,20 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         val smartTurnEnabled = boolean(
             key = "dictate__smart_turn_enabled",
             default = false,
+        )
+        // Voice Keyboard chunking (AUTO mode without Smart Turn): pause that ends a chunk, the least audio a
+        // chunk must have before a pause may end it, and the length at which a chunk is cut anyway.
+        val vkChunkSilenceMs = int(
+            key = "vk__chunk_silence_ms",
+            default = 500,
+        )
+        val vkChunkMinSeconds = int(
+            key = "vk__chunk_min_seconds",
+            default = 3,
+        )
+        val vkChunkMaxSeconds = int(
+            key = "vk__chunk_max_seconds",
+            default = 15,
         )
         // Speed of the typewriter animation when instantOutput is off (1 = slow … 10 = fast).
         val outputSpeed = int(

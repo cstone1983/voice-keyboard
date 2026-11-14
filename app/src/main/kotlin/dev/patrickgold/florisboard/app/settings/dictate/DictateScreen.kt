@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Segment
@@ -361,6 +362,14 @@ fun DictateRecordingScreen() = FlorisScreen {
                 onDismiss = { showLongformDialog = false },
             )
         }
+        // Voice Keyboard: how long the last dictations took (per chunk, and stop to final text).
+        val timingNav = LocalNavController.current
+        Preference(
+            icon = Icons.Default.Timer,
+            title = "Dictation timing",
+            summary = "Per-chunk transcription time and time from stop to final text",
+            onClick = { timingNav.navigate(Routes.Settings.DictateTiming) },
+        )
         SwitchPreference(
             prefs.dictate.audioFocus,
             icon = Icons.Default.VolumeOff,
@@ -682,8 +691,8 @@ private fun speedUpSaving(percent: Int): String =
 private fun longformModeSummary(mode: DictateLongformMode, seconds: Int): String = when (mode) {
     DictateLongformMode.OFF -> stringRes(R.string.dictate__longform_mode_off)
     DictateLongformMode.MANUAL -> stringRes(R.string.dictate__longform_mode_manual)
-    DictateLongformMode.AUTO -> stringRes(R.string.dictate__longform_autosplit_title) + " · " +
-        stringRes(R.string.dictate__longform_autosplit_value, "seconds" to "$seconds")
+    // Voice Keyboard: the pause slider only applies with Smart Turn now, so the summary names the mode.
+    DictateLongformMode.AUTO -> stringRes(R.string.dictate__longform_autosplit_title)
 }
 
 /** The single dialog holding all long-form settings: the mode, plus the pause length when auto (#170). */
@@ -723,7 +732,11 @@ private fun LongformDialog(
                 titleRes = R.string.dictate__longform_autosplit_title,
                 summaryRes = R.string.dictate__longform_autosplit_summary,
             ) { scope.launch { prefs.dictate.longformMode.set(it) } }
-            if (mode == DictateLongformMode.AUTO) {
+            if (mode == DictateLongformMode.AUTO && !smartTurnActive) {
+                // Voice Keyboard: the chunking rule for a CPU-only server (see LiveSpeechSplitter.SimpleCuts).
+                VkChunkSliders()
+                SmartTurnRow()
+            } else if (mode == DictateLongformMode.AUTO) {
                 var sliderValue by remember(seconds) { mutableStateOf(seconds.toFloat()) }
                 Text(
                     modifier = Modifier.padding(top = 12.dp, start = 8.dp),
@@ -751,6 +764,59 @@ private fun LongformDialog(
             }
         }
     }
+}
+
+/** Voice Keyboard: pause length, minimum and maximum chunk length for chunked dictation. */
+@Composable
+private fun VkChunkSliders() {
+    val prefs by FlorisPreferenceStore
+    val scope = rememberCoroutineScope()
+    val silenceMs by prefs.dictate.vkChunkSilenceMs.collectAsState()
+    val minSeconds by prefs.dictate.vkChunkMinSeconds.collectAsState()
+    val maxSeconds by prefs.dictate.vkChunkMaxSeconds.collectAsState()
+
+    var silence by remember(silenceMs) { mutableStateOf(silenceMs.toFloat()) }
+    Text(
+        modifier = Modifier.padding(top = 12.dp, start = 8.dp),
+        text = "Pause that ends a chunk: %.1f s".format(silence / 1000f),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Slider(
+        modifier = Modifier.padding(horizontal = 8.dp),
+        value = silence,
+        onValueChange = { silence = (it / 100f).roundToInt() * 100f },
+        onValueChangeFinished = { scope.launch { prefs.dictate.vkChunkSilenceMs.set(silence.roundToInt()) } },
+        valueRange = 300f..2000f,
+        steps = 16,
+    )
+    var minS by remember(minSeconds) { mutableStateOf(minSeconds.toFloat()) }
+    Text(
+        modifier = Modifier.padding(top = 4.dp, start = 8.dp),
+        text = "Shortest chunk: ${minS.roundToInt()} s",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Slider(
+        modifier = Modifier.padding(horizontal = 8.dp),
+        value = minS,
+        onValueChange = { minS = it },
+        onValueChangeFinished = { scope.launch { prefs.dictate.vkChunkMinSeconds.set(minS.roundToInt()) } },
+        valueRange = 1f..8f,
+        steps = 6,
+    )
+    var maxS by remember(maxSeconds) { mutableStateOf(maxSeconds.toFloat()) }
+    Text(
+        modifier = Modifier.padding(top = 4.dp, start = 8.dp),
+        text = "Longest chunk (cut anyway): ${maxS.roundToInt()} s",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Slider(
+        modifier = Modifier.padding(horizontal = 8.dp),
+        value = maxS,
+        onValueChange = { maxS = it },
+        onValueChangeFinished = { scope.launch { prefs.dictate.vkChunkMaxSeconds.set(maxS.roundToInt()) } },
+        valueRange = 8f..30f,
+        steps = 21,
+    )
 }
 
 /**

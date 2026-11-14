@@ -44,8 +44,17 @@ class LiveSpeechSplitter(
     context: Context,
     private val pauseThresholdMs: Int,
     private val useSmartTurn: Boolean,
+    /**
+     * Voice Keyboard: when set and Smart Turn is off, cut by this simple rule instead of the pause timer —
+     * a pause of [SimpleCuts.silenceMs] after at least [SimpleCuts.minSegmentMs] of audio, or a forced cut
+     * at [SimpleCuts.maxSegmentMs] at the quietest point of the last second.
+     */
+    private val simpleCuts: SimpleCuts? = null,
     private val onPause: (cutAtSample: Long) -> Unit,
 ) {
+    /** Voice Keyboard: the chunking rule for low-latency dictation on a CPU-only server. */
+    data class SimpleCuts(val minSegmentMs: Int, val silenceMs: Int, val maxSegmentMs: Int)
+
     private val appContext = context.applicationContext
     private val queue = LinkedBlockingQueue<Event>()
     private val inferenceExecutor = Executors.newSingleThreadExecutor { runnable ->
@@ -122,6 +131,21 @@ class LiveSpeechSplitter(
         val fallbackWindows = ((pauseThresholdMs + windowMs - 1) / windowMs).coerceAtLeast(smartTurnWindows)
         val policy = SmartTurnPausePolicy(smartTurnWindows, fallbackWindows)
 
+        // Voice Keyboard simple cuts (see [simpleCuts]). Sample counts are in [processed] units.
+        val simple = if (useSmartTurn) null else simpleCuts?.let { rule ->
+            val sr = AudioDecode.TARGET_SAMPLE_RATE.toLong()
+            // The VAD reports silence only after a quarter second of it, so that much is already counted.
+            val vadDelayMs = VAD_MIN_SILENCE_SAMPLES * 1000 / AudioDecode.TARGET_SAMPLE_RATE
+            SimpleCutPolicy(
+                minSegmentSamples = rule.minSegmentMs * sr / 1000,
+                silenceWindowsNeeded = ((rule.silenceMs - vadDelayMs + windowMs - 1) / windowMs).coerceAtLeast(1),
+                maxSegmentSamples = rule.maxSegmentMs * sr / 1000,
+                windowSamples = SpeechGate.VAD_WINDOW,
+                vadDelaySamples = VAD_MIN_SILENCE_SAMPLES,
+                ringWindows = AudioDecode.TARGET_SAMPLE_RATE / SpeechGate.VAD_WINDOW + 1,
+            )
+        }
+
         fun resetDetector(keepSamples: Int = 0) {
             if (keepSamples > 0) turnBuffer.keepNewest(keepSamples) else turnBuffer.clear()
             filled = 0
@@ -171,6 +195,7 @@ class LiveSpeechSplitter(
                 if (event is Event.Reset) {
                     policy.reset()
                     resetDetector()
+                    simple?.reset(processed)
                     continue
                 }
                 if (event is Event.Prediction) {
@@ -184,7 +209,8 @@ class LiveSpeechSplitter(
                     val take = minOf(SpeechGate.VAD_WINDOW - filled, chunk.size - idx)
                     var k = 0
                     while (k < take) {
-                        window[filled + k] = chunk[idx + k] / 32768f
+                        val v = chunk[idx + k] / 32768f
+                        window[filled + k] = v
                         k++
                     }
                     filled += take
@@ -194,7 +220,13 @@ class LiveSpeechSplitter(
                     filled = 0
                     runCatching { vad.acceptWaveform(window) }
                     val speech = runCatching { vad.isSpeechDetected() }.getOrDefault(false)
-                    handle(policy.onVadWindow(speech))
+                    if (simple != null) {
+                        var energy = 0.0
+                        for (v in window) energy += v * v
+                        simple.onWindow(speech, energy, processed)?.let { cutAt -> runCatching { onPause(cutAt) } }
+                    } else {
+                        handle(policy.onVadWindow(speech))
+                    }
                 }
             }
         } catch (_: Throwable) {

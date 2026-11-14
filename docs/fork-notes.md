@@ -33,6 +33,26 @@ The server shows a QR code with one line of JSON:
   stored encrypted (Keystore) and never logged.
 - Models are settings, picked from `GET <base_url>models` or typed (they may change after tuning).
 
+## Chunked dictation (low latency on a CPU-only server)
+
+Upstream's long-form segmented mode already transcribes cut segments while recording, shows them as a
+replaceable preview, sends the last 200 characters + custom words as the Whisper prompt, and runs
+cleanup once on the joined text. Voice Keyboard changes:
+
+- On by default (`AUTO`).
+- New cut rule when Smart Turn is off (`SimpleCutPolicy`): a pause (default 0.5 s) ends a chunk once it
+  has at least 3 s; a chunk is cut anyway at 15 s, at the quietest window of the last second. Cuts go into
+  the silence, so no word is split. Settings: Dictation → Long-form → sliders.
+- One upload at a time, strictly in order (the next chunk waits for the previous one, so its prompt
+  already contains the previous text).
+- Network loss: a chunk is retried up to 5 times over ~15 s (it waits on disk; later chunks wait in line).
+- Timing: Settings → Dictation → Dictation timing (per chunk and stop-to-text, chunked and single), and
+  `adb logcat -s VKTiming` (durations only, never text).
+
+Possible server change that would help further (not done, server is managed separately): a streaming
+endpoint (WebSocket, OpenAI realtime-style) would remove per-request overhead and let the last chunk start
+before stop.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

@@ -152,6 +152,8 @@ import java.util.concurrent.atomic.AtomicLong
 object DictateController {
 
     private const val LATENCY_LOG_TAG = "DictateLatency"
+    /** Voice Keyboard: waits before each attempt of a segment upload (5 attempts over ~15 s). */
+    private val SEGMENT_RETRY_BACKOFF_MS = longArrayOf(0L, 1_000L, 2_000L, 4_000L, 8_000L)
     private val latencyFlowIds = AtomicLong()
 
     /** Correlates privacy-safe phase timings for one batch transcription without logging its contents. */
@@ -418,6 +420,11 @@ object DictateController {
     // value it was cut under, and a result from another one is dropped: it belongs to a dictation that is
     // over, and the maps and the field it would write into now belong to the next one (#172).
     private var segmentGeneration = 0
+    // Voice Keyboard: one segment upload at a time, in cut order (the server's Whisper uses every CPU core).
+    // Gate i completes when segment i is done (or had nothing to send); segment i+1 waits for it.
+    private val segmentUploadGates = HashMap<Int, CompletableDeferred<Unit>>()
+    private fun segmentUploadGate(i: Int): CompletableDeferred<Unit> =
+        synchronized(segmentUploadGates) { segmentUploadGates.getOrPut(i) { CompletableDeferred() } }
     private var segmentRecordedSeconds = 0L
     private var segmentVad: LiveSpeechSplitter? = null  // live VAD auto-split, when enabled (Phase 2)
     private val segmentAudioFiles = HashMap<Int, File>()  // kept segment WAVs (index -> file) for history merge
@@ -1636,6 +1643,11 @@ object DictateController {
                         prefs.dictate.longformAutoSplitSeconds.get() * 1000,
                         useSmartTurn = prefs.dictate.smartTurnEnabled.get() &&
                             SmartTurnModel.isModelAvailable(appContext),
+                        simpleCuts = LiveSpeechSplitter.SimpleCuts(
+                            minSegmentMs = prefs.dictate.vkChunkMinSeconds.get() * 1000,
+                            silenceMs = prefs.dictate.vkChunkSilenceMs.get(),
+                            maxSegmentMs = prefs.dictate.vkChunkMaxSeconds.get() * 1000,
+                        ),
                     ) { cutAt -> flushSegment(appContext, splitterAlreadyReset = true, cutAtSample = cutAt) }
                         .also { it.start() }
                 } else null
@@ -1805,6 +1817,9 @@ object DictateController {
             stopSegmentedAndFinalize(context)
             return
         }
+        // Voice Keyboard timing: a single upload after stop.
+        DictationTimings.begin()
+        DictationTimings.markStop()
         // Real-time recording (#128): finalize the stream instead of uploading the whole file.
         if (realtimeSession != null) {
             stopRealtimeAndFinalize(context)
@@ -2330,6 +2345,7 @@ object DictateController {
                     handedOver = handedOver,
                 )
                 logLatency(latencyTrace, "finalizeCompleted", finalizeStartedNanos)
+                DictationTimings.finish(chunked = false, recordedSeconds = recordedSeconds, finalizeStartedNanos = finalizeStartedNanos)
                 outcome = "success"
             } catch (c: CancellationException) {
                 // Stopped or abandoned: never an error here, the state is the canceller's to set. The row
@@ -3135,6 +3151,8 @@ object DictateController {
             !transcriptionAccount().transcriptionViaChat
 
     private fun initSegmented(appContext: Context) {
+        synchronized(segmentUploadGates) { segmentUploadGates.clear() }
+        DictationTimings.begin()
         segmentedActive = true
         segmentNextIndex = 0
         segmentCommitIndex = 0
@@ -3163,6 +3181,7 @@ object DictateController {
 
     private fun resetSegmentedState() {
         segmentGeneration++
+        synchronized(segmentUploadGates) { segmentUploadGates.values.forEach { it.complete(Unit) }; segmentUploadGates.clear() }
         segmentedActive = false
         segmentNextIndex = 0
         segmentCommitIndex = 0
@@ -3225,6 +3244,7 @@ object DictateController {
             } else {
                 // Nothing captured since the last cut (e.g. a double tap): keep the index sequence
                 // contiguous so the ordered drain never stalls.
+                segmentUploadGate(idx).complete(Unit)
                 onSegmentResult(appContext, idx, "", generation)
             }
         }
@@ -3259,6 +3279,7 @@ object DictateController {
         _livePromptActive.value = false
         unregisterScreenOffReceiver()
         segmentRecordedSeconds = recordedSecondsOf(_state.value)
+        DictationTimings.markStop()
         _segmentedRecording.value = false
         setTranscribing()
         val generation = segmentGeneration
@@ -3284,6 +3305,7 @@ object DictateController {
             if (!discardFinal && wav != null && wav.exists() && wav.length() > 0L) {
                 launchSegmentTranscription(appContext, idx, wav, generation)
             } else {
+                segmentUploadGate(idx).complete(Unit)
                 onSegmentResult(appContext, idx, "", generation)
             }
         }
@@ -3318,13 +3340,46 @@ object DictateController {
     }
 
     private fun launchSegmentTranscription(appContext: Context, idx: Int, wav: File, generation: Int) {
+        val previousGate = if (idx > 0) segmentUploadGate(idx - 1) else null
+        val ownGate = segmentUploadGate(idx)
         val job = scope.launch {
-            // Best-effort cross-segment continuity: bias the recognizer with what's been said so far.
-            val continuity = realtimeTranscript.toString()
-            // One retry before giving up; a still-failed segment leaves a gap (no placeholder), but its
-            // audio is preserved in the merged history WAV so nothing is truly lost.
-            val segment = transcribeSegmentRaw(appContext, wav, continuity)
-                ?: transcribeSegmentRaw(appContext, wav, continuity)
+            var segment: SegmentText? = null
+            try {
+                // Voice Keyboard: wait for the previous segment, so one request is in flight at a time and
+                // the continuity prompt below already holds the text just before this one.
+                previousGate?.await()
+                // Best-effort cross-segment continuity: bias the recognizer with what's been said so far.
+                val continuity = realtimeTranscript.toString()
+                // Silence is decided once; a silent segment is not a failure and is never retried.
+                val silent = prefs.dictate.skipSilentRecordings.get() &&
+                    !withContext(Dispatchers.IO) { SpeechGate.hasSpeech(appContext, wav) }
+                if (!silent) {
+                    // Retries with backoff (Voice Keyboard): the segment waits on disk while the network is
+                    // away, and the ones after it wait in line. A still-failed segment leaves a gap (no
+                    // placeholder), but its audio is preserved in the merged history WAV.
+                    var attempts = 0
+                    var requestMs = 0L
+                    for (backoffMs in SEGMENT_RETRY_BACKOFF_MS) {
+                        if (backoffMs > 0) delay(backoffMs)
+                        attempts++
+                        val started = SystemClock.elapsedRealtime()
+                        segment = transcribeSegmentRaw(appContext, wav, continuity, speechChecked = true)
+                        requestMs = SystemClock.elapsedRealtime() - started
+                        if (segment != null) break
+                    }
+                    DictationTimings.addChunk(
+                        DictationTimings.Chunk(
+                            index = idx,
+                            audioMs = DictationTimings.wavDurationMs(wav.length()),
+                            transcribeMs = requestMs,
+                            attempts = attempts,
+                            ok = segment != null,
+                        ),
+                    )
+                }
+            } finally {
+                ownGate.complete(Unit)
+            }
             // Keep the WAV when it will be merged into the history audio; otherwise drop it now.
             if (!segmentKeepAudio) withContext(Dispatchers.IO) { runCatching { wav.delete() } }
             onSegmentResult(appContext, idx, segment?.text ?: "", generation, segment?.fallbackEngine)
@@ -3427,10 +3482,12 @@ object DictateController {
             language = prefs.dictate.activeInputLanguage.get().takeIf { it != DictateLanguages.DETECT } ?: "",
             source = if (outputTarget == OutputTarget.OVERLAY) DictateHistorySource.OVERLAY else DictateHistorySource.KEYBOARD,
         )
+        val finalizeStartedNanos = SystemClock.elapsedRealtimeNanos()
         finalizeAndCommit(
             appContext, assembled, recordedSeconds, live = false,
             alreadyFormatted = false, finalizeViaComposing = true, capture = capture, handedOver = handedOver,
         )
+        DictationTimings.finish(chunked = true, recordedSeconds = recordedSeconds, finalizeStartedNanos = finalizeStartedNanos)
         mergedWav?.delete() // history already copied it during finalize
     }
 
@@ -3450,11 +3507,12 @@ object DictateController {
         wav: File,
         continuity: String,
         fallbackAccount: ProviderAccount? = null,
+        speechChecked: Boolean = false,
     ): SegmentText? {
         // Silence gate (issue #93): skip a segment that is just silence — e.g. the trailing pause before a
         // cut/stop — so the model can't hallucinate ghost text ("Vielen Dank" / "Thanks for watching")
         // from it. Fails open (transcribes) if the check can't run, so real speech is never dropped.
-        if (prefs.dictate.skipSilentRecordings.get() && !SpeechGate.hasSpeech(appContext, wav)) return null
+        if (!speechChecked && prefs.dictate.skipSilentRecordings.get() && !SpeechGate.hasSpeech(appContext, wav)) return null
         val account = fallbackAccount ?: transcriptionAccount()
         val apiKey = account.apiKey
         val preset = presetFor(account)
@@ -3540,7 +3598,7 @@ object DictateController {
                         ) {
                             val other = prefs.dictate.providerAccounts.get().getOrEmpty(fallbackId)
                             Log.i(LATENCY_LOG_TAG, "phase=fallback segment to=${presetFor(other).id} kind=${e.kind}")
-                            return transcribeSegmentRaw(appContext, wav, continuity, fallbackAccount = other)
+                            return transcribeSegmentRaw(appContext, wav, continuity, fallbackAccount = other, speechChecked = true)
                                 ?.let { SegmentText(it.text, historyEngineOf(appContext, other)) }
                         }
                         val fallback = (if (fallbackId == ProviderRegistry.LOCAL.id) localFallbackProvider(appContext, e) else null)
