@@ -67,7 +67,9 @@ import dev.patrickgold.florisboard.dictate.field.applySeamCase
 import dev.patrickgold.florisboard.dictate.field.continuesSentence
 import dev.patrickgold.florisboard.dictate.field.dropSeamFullStop
 import dev.patrickgold.florisboard.dictate.field.seamCaseOf
+import dev.patrickgold.florisboard.dictate.provider.ChatMessage
 import dev.patrickgold.florisboard.dictate.provider.ChatRequest
+import dev.patrickgold.florisboard.dictate.provider.ChatRole
 import dev.patrickgold.florisboard.dictate.provider.DictateApiException
 import dev.patrickgold.florisboard.dictate.provider.LocalModelCatalog
 import dev.patrickgold.florisboard.dictate.provider.LocalModelManager
@@ -4987,17 +4989,21 @@ object DictateController {
                 val input = text
                 val cleanupStarted = SystemClock.elapsedRealtime()
                 val cleaned = rewordOrKeep(input) {
-                    requestReword(
+                    // Instructions and style notes in the system message, the text alone in the user message:
+                    // nothing that describes the writer may sit next to the text it could be copied into.
+                    requestCleanup(
                         instruction, input, p.reasoning,
                         temperature = dev.patrickgold.florisboard.vk.learning.VkCleanup.TEMPERATURE,
                         maxTokens = dev.patrickgold.florisboard.vk.learning.VkCleanup.maxTokens(input),
                     )
                 }
                 dev.patrickgold.florisboard.vk.learning.VkLearning.noteCleanupMs(SystemClock.elapsedRealtime() - cleanupStarted)
-                text = if (dev.patrickgold.florisboard.vk.learning.VkCleanup.isSane(input, cleaned)) {
+                val rejectReason = dev.patrickgold.florisboard.vk.learning.VkCleanup.rejectReason(input, cleaned)
+                text = if (rejectReason == null) {
                     cleaned
                 } else {
-                    Log.i(LATENCY_LOG_TAG, "phase=cleanupRejected inChars=${input.length} outChars=${cleaned.length}")
+                    // Lengths only, never text.
+                    Log.i("VKCleanup", "rejected reason=$rejectReason inChars=${input.length} outChars=${cleaned.length}")
                     vkCleanupRejected = true
                     input
                 }
@@ -5161,11 +5167,31 @@ object DictateController {
      * Low-level rewording call: sends [userContent] verbatim as a single user message. [reasoning] is the
      * prompt's level (#155); ACCOUNT is the rewording account's own setting.
      */
+    /**
+     * Voice Keyboard: the automatic cleanup as two messages — [system] (the cleanup instruction, its style
+     * notes and the "be precise" system prompt) as the system message, and only the framed text as the user
+     * message.
+     */
+    private suspend fun requestCleanup(
+        system: String,
+        input: String,
+        reasoning: PromptReasoning,
+        temperature: Double?,
+        maxTokens: Int?,
+    ): String {
+        val systemContent = listOf(system, systemPrompt()).filter { it.isNotBlank() }.joinToString("\n\n")
+        val userContent = DictatePromptDefaults.REWORDING_TEXT_FRAME + "\n\n<text>\n" + input + "\n</text>"
+        return DictatePromptDefaults.stripTextTags(
+            requestRewordRaw(userContent, reasoning, temperature, maxTokens, systemContent = systemContent),
+        )
+    }
+
     private suspend fun requestRewordRaw(
         userContent: String,
         reasoning: PromptReasoning = PromptReasoning.ACCOUNT,
         temperature: Double? = null,
         maxTokens: Int? = null,
+        systemContent: String? = null,
     ): String {
         val account = rewordingAccount()
         val apiKey = rewordingApiKey()
@@ -5190,8 +5216,16 @@ object DictateController {
         // Reasoning (#141): the account's own setting, unless the prompt asks for a level of its own (#155).
         val reasoningWire = rewordingReasoningWire(account, preset, model, reasoning)
         val result = client.complete(
-            ChatRequest.ofUser(model, userContent, reasoningEffort = reasoningWire)
-                .copy(temperature = temperature, maxTokens = maxTokens),
+            ChatRequest(
+                model = model,
+                messages = listOfNotNull(
+                    systemContent?.takeIf { it.isNotBlank() }?.let { ChatMessage(ChatRole.SYSTEM, it) },
+                    ChatMessage(ChatRole.USER, userContent),
+                ),
+                reasoningEffort = reasoningWire,
+                temperature = temperature,
+                maxTokens = maxTokens,
+            ),
         ).text.trim()
         // Lifetime statistics (issue #142): every rewording/prompt pass funnels through here.
         DictateStats.recordRewording(prefs)

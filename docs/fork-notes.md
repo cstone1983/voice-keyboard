@@ -129,6 +129,16 @@ server, and three style examples in every cleanup prompt made cleanup 2-3x slowe
 timestamps (`low_confidence: []`), cleanup prompt carries only `cleanup_style` and `cleanup_avoid`;
 temperature 0.2 and `max_tokens` (≈ 2× input tokens + 50) confirmed on the wire by a test.
 
+## Cleanup safety net (2026-11-14, cleanup added a sentence from the style notes)
+
+- The automatic Clean up is sent as two messages: system = cleanup instruction + "Style notes (tone
+  only - never add, remove or change words because of these): <cleanup_style>" + avoid list + the "be
+  precise" prompt; user = only the framed text. No style examples.
+- `VkCleanup.rejectReason`: empty / "text" / `<text>`, more words than raw + 2, more sentences than
+  raw, a sentence > 60 % new words, shorter than half the raw text → raw text (after learned
+  replacements) inserted, logged as `VKCleanup: rejected reason=…`, no corrections for that dictation.
+- Trade-off: "more sentences" also rejects a cleanup that only splits an unpunctuated run-on sentence.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

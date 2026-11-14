@@ -25,15 +25,44 @@ object VkCleanup {
     fun maxTokens(input: String): Int = input.length / 2 + 50
 
     /** True when the cleanup output can be used; otherwise the raw transcription goes in. */
-    fun isSane(input: String, output: String): Boolean {
+    fun isSane(input: String, output: String): Boolean = rejectReason(input, output) == null
+
+    /**
+     * Why a cleanup answer must not be used, or null when it may. The cleanup may only remove fillers and fix
+     * grammar and punctuation, so its answer must not grow (server finding 2026-11-14: a style note was copied
+     * into the text as a whole new sentence):
+     * - empty, "text", or `<text>` tags;
+     * - more words than the raw text + 2, or more sentences than the raw text;
+     * - a sentence whose words are mostly (> 60 %) not in the raw text;
+     * - shorter than half of the raw text.
+     */
+    fun rejectReason(input: String, output: String): String? {
         val out = output.trim()
-        if (out.isEmpty()) return false
-        if (out.equals("text", ignoreCase = true)) return false
-        if (out.contains("<text", ignoreCase = true) || out.contains("</text", ignoreCase = true)) return false
-        val inLen = input.trim().length.coerceAtLeast(1)
-        val ratio = out.length.toDouble() / inLen
-        return ratio in 0.3..3.0
+        if (out.isEmpty()) return "empty"
+        if (out.equals("text", ignoreCase = true)) return "text"
+        if (out.contains("<text", ignoreCase = true) || out.contains("</text", ignoreCase = true)) return "tags"
+        val rawWords = words(input)
+        val outWords = words(out)
+        if (outWords.size > rawWords.size + 2) return "more_words"
+        if (sentences(out).size > sentences(input).size.coerceAtLeast(1)) return "more_sentences"
+        val known = rawWords.map(::norm).toSet()
+        for (s in sentences(out)) {
+            val ws = words(s).map(::norm).filter { it.isNotEmpty() }
+            if (ws.size < 2) continue
+            val unknown = ws.count { it !in known }
+            if (unknown.toDouble() / ws.size > 0.6) return "new_sentence"
+        }
+        if (out.length < input.trim().length * 0.5) return "too_short"
+        return null
     }
+
+    private fun words(s: String) = s.split(Regex("\\s+")).filter { w -> w.any { it.isLetterOrDigit() } }
+
+    private fun norm(w: String) = w.trim { !it.isLetterOrDigit() }.lowercase()
+
+    /** Sentences: pieces ending in . ! ? or a line break, that contain a letter or digit. */
+    private fun sentences(s: String) =
+        s.split(Regex("(?<=[.!?])\\s+|\\n+")).map { it.trim() }.filter { p -> p.any { it.isLetterOrDigit() } }
 
     private val SPOKEN = listOf(
         Regex("""\s*,?\s*\b(new paragraph)\b[.,]?\s*""", RegexOption.IGNORE_CASE) to "\n\n",

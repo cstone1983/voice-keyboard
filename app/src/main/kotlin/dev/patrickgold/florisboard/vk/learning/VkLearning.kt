@@ -544,7 +544,7 @@ object VkLearning {
         return buildString {
             append("Fix only filler words, grammar and punctuation. Do not change the wording or the tone, and do not add words (for example \"please\").")
             if (p != null && p.cleanupStyle.isNotBlank()) {
-                append("\nMatch this writing style (tone and wording only; keep correct grammar and punctuation):\n")
+                append("\nStyle notes (tone only - never add, remove or change words because of these): ")
                 append(p.cleanupStyle.trim())
             }
             if (p != null && p.cleanupAvoid.isNotEmpty()) {
