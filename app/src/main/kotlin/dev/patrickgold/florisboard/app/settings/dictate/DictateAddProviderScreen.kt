@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import dev.patrickgold.florisboard.R
+import dev.patrickgold.florisboard.app.Routes
 import dev.patrickgold.florisboard.app.FlorisPreferenceStore
 import dev.patrickgold.florisboard.app.LocalNavController
 import dev.patrickgold.florisboard.app.settings.search.settingsSearchAnchor
@@ -152,7 +153,11 @@ fun DictateAddProviderScreen() = FlorisScreen {
             modifier = Modifier.settingsSearchAnchor("dictate__providers_add_custom"),
             title = stringRes(R.string.dictate__providers_add_custom),
             summary = stringRes(R.string.dictate__providers_add_custom_summary),
-            onClick = { editingId = ProviderAccount.newCustomId() },
+            // Voice Keyboard: the own-server form (QR code, address + key, models).
+            onClick = {
+                dev.patrickgold.florisboard.app.setup.OwnServerEditHandoff.editId = null
+                navController.navigate(Routes.Settings.DictateOwnServer)
+            },
         )
 
         editingId?.let { id ->

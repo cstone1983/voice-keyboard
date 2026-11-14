@@ -90,8 +90,15 @@ import java.io.File
 import java.net.URI
 import java.util.concurrent.TimeUnit
 
+/** Which server the own-server screen edits next (set right before navigating there; read once). */
+internal object OwnServerEditHandoff {
+    @Volatile var editId: String? = null
+}
+
 /** What the own-server form hands back when the user saves it. */
 internal data class OwnServerChoice(
+    /** The account being edited, or null for a new server. */
+    val editId: String? = null,
     val baseUrl: String,
     val apiKey: String,
     val transcriptionModel: String,
@@ -180,7 +187,8 @@ private fun checkHealth(baseUrl: String): Boolean {
  */
 internal suspend fun FlorisPreferenceModel.saveOwnServer(choice: OwnServerChoice) {
     val accounts = dictate.providerAccounts.get()
-    val existing = accounts.accounts.values.firstOrNull { it.isCustom && it.customBaseUrl == choice.baseUrl }
+    val existing = choice.editId?.let { accounts[it] }
+        ?: accounts.accounts.values.firstOrNull { it.isCustom && it.customBaseUrl == choice.baseUrl }
     val id = existing?.providerId ?: ProviderAccount.newCustomId()
     val base = existing ?: ProviderAccount(providerId = id, displayName = "My server")
     val account = base.copy(
@@ -210,20 +218,28 @@ internal suspend fun FlorisPreferenceModel.saveOwnServer(choice: OwnServerChoice
 internal fun OwnServerSetup(
     onSave: (OwnServerChoice) -> Unit,
     onBack: (() -> Unit)?,
+    /** When editing: the stored server, whose address, key and models fill the form. */
+    existing: ProviderAccount? = null,
 ) {
     val prefs by FlorisPreferenceStore
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var baseUrl by rememberSaveable { mutableStateOf("") }
-    var apiKey by rememberSaveable { mutableStateOf("") }
+    var baseUrl by rememberSaveable { mutableStateOf(existing?.customBaseUrl.orEmpty()) }
+    var apiKey by rememberSaveable { mutableStateOf(existing?.apiKey.orEmpty()) }
     var showKey by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
+    var status by remember {
+        mutableStateOf(if (existing != null && existing.apiKey.isNotEmpty()) "API key saved (it stays unless you change it)." else null)
+    }
     var error by remember { mutableStateOf<String?>(null) }
-    var models by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
-    var sttModel by rememberSaveable { mutableStateOf("") }
-    var chatModel by rememberSaveable { mutableStateOf("") }
+    var models by remember {
+        mutableStateOf(existing?.cachedModels.orEmpty().map { id ->
+            ModelInfo(id, outputModalities = if (id in existing!!.cachedTranscriptionModels) listOf("transcription") else emptyList())
+        })
+    }
+    var sttModel by rememberSaveable { mutableStateOf(existing?.transcriptionModel.orEmpty()) }
+    var chatModel by rememberSaveable { mutableStateOf(existing?.chatModel.orEmpty()) }
     var photoFile by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun normalizedUrl(): String = baseUrl.trim().let { if (it.isEmpty() || it.endsWith("/")) it else "$it/" }
@@ -316,7 +332,7 @@ internal fun OwnServerSetup(
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Your own server", style = MaterialTheme.typography.titleMedium)
+            Text(if (existing == null) "Your own server" else "Edit your server", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
                 "Scan the setup QR code your server shows, or enter its address (ending in /v1/) and API key.",
@@ -420,6 +436,7 @@ internal fun OwnServerSetup(
                 onClick = {
                     onSave(
                         OwnServerChoice(
+                            editId = existing?.providerId,
                             baseUrl = normalizedUrl(),
                             apiKey = apiKey.trim(),
                             transcriptionModel = sttModel.trim(),

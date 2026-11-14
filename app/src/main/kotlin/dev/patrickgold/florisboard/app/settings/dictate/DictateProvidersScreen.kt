@@ -324,7 +324,11 @@ fun DictateProvidersScreen() = FlorisScreen {
                         stringRes(R.string.dictate__providers_status_unconfigured)
                     },
                     trailing = roles(account.providerId),
-                    onClick = { editingId = account.providerId },
+                    // Voice Keyboard: a server of the user's own opens the QR / address form, key kept.
+                    onClick = {
+                        dev.patrickgold.florisboard.app.setup.OwnServerEditHandoff.editId = account.providerId
+                        navController.navigate(Routes.Settings.DictateOwnServer)
+                    },
                 )
             }
 
