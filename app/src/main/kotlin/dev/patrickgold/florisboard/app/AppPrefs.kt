@@ -935,13 +935,15 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         // (see DictateLanguages; "detect" = auto-detect). Default mirrors the legacy app.
         val inputLanguages = string(
             key = "dictate__input_languages",
-            default = "detect,en",
+            // Voice Keyboard: English first and active, so the language is always sent (auto-detect costs
+            // the CPU-only server a whole extra pass). Auto-detect stays available.
+            default = "en,detect",
         )
         // The currently active dictation language code; persists across sessions and is switched
         // from the recording bar's language chip.
         val activeInputLanguage = string(
             key = "dictate__active_input_language",
-            default = "detect",
+            default = "en",
         )
         // The language a shared file is transcribed in, once one has been picked on the share screen
         // (issue #461). Blank until then, which means the active dictation language, as before. Its own

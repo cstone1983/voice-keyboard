@@ -1607,6 +1607,20 @@ object DictateController {
         // a screen reader has to speak (#159), and the observer only hears what happens once it runs.
         ensureHapticObserver(appContext)
         if (refuseIfNoCredential(context)) return
+        // Voice Keyboard: an English-only model (".en") cannot transcribe another language; say so now
+        // instead of recording something that can only come back wrong.
+        run {
+            val account = transcriptionAccount()
+            val model = transcriptionModelFor(appContext, account, presetFor(account))
+            val code = prefs.dictate.activeInputLanguage.get()
+            if (isEnglishOnlyModel(model) && code != DictateLanguages.DETECT && !code.startsWith("en")) {
+                _state.value = UiState.Error(
+                    "The speech model $model is English-only. Switch the dictation language to English, " +
+                        "or pick a multilingual model for your server.",
+                )
+                return
+            }
+        }
         // Measured from here to the recorder running and to its first frame (#447): whatever is said
         // before that frame is not in the recording at all.
         val startRequestedAt = SystemClock.elapsedRealtime()
@@ -2213,8 +2227,7 @@ object DictateController {
                     model = model,
                     // Null for "detect" so the provider auto-detects; otherwise the chosen code. For the
                     // chat-audio path the language goes into the instruction (readable name) instead.
-                    language = if (chatAudio) null else prefs.dictate.activeInputLanguage.get()
-                        .takeIf { it != DictateLanguages.DETECT },
+                    language = if (chatAudio) null else wireLanguage(model),
                     // Auto-detect on a model that hints a list of languages: name the user's own instead
                     // of detecting from the whole world (#99). Everything else ignores this.
                     expectedLanguages = if (chatAudio) emptyList() else expectedLanguages(),
@@ -3524,7 +3537,7 @@ object DictateController {
         } else {
             fallbackIdFor(appContext, account)
         }
-        val language = prefs.dictate.activeInputLanguage.get().takeIf { it != DictateLanguages.DETECT }
+        val language = wireLanguage(model)
         val style = transcriptionStylePrompt(prefs)
         val prompt = continuity.takeLast(200).trim().let { if (it.isEmpty()) style else "$it $style".trim() }
         // Time compression (issue #272): every segment is billed on its own, so the speed-up belongs here
@@ -5189,6 +5202,21 @@ object DictateController {
      * real-time off, long-form, the floating button — must use that one instead of failing with
      * "no model downloaded".
      */
+    /** Voice Keyboard: an English-only Whisper model, by the ".en" naming convention. */
+    private fun isEnglishOnlyModel(model: String): Boolean =
+        model.endsWith(".en", ignoreCase = true) || model.contains(".en-", ignoreCase = true)
+
+    /**
+     * Voice Keyboard: the `language` form field. The chosen two-letter code (lowercase), so the server
+     * never spends a whole extra pass detecting it; null only for "Detect automatically" — except on an
+     * English-only model, which gets "en".
+     */
+    private fun wireLanguage(model: String): String? {
+        val code = prefs.dictate.activeInputLanguage.get()
+        if (code == DictateLanguages.DETECT) return if (isEnglishOnlyModel(model)) "en" else null
+        return code.substringBefore('-').lowercase(java.util.Locale.ROOT)
+    }
+
     private fun transcriptionModelFor(
         context: Context,
         account: ProviderAccount,

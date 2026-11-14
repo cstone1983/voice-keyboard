@@ -48,7 +48,7 @@ object DictateLanguages {
 
     val all: List<DictateLanguage> = listOf(
         // Stays first: `of` and `parseSelection` fall back to `all.first()` meaning "let the model decide".
-        DictateLanguage(DETECT, "Detect automatically"),
+        DictateLanguage(DETECT, "Detect automatically (slower)"),
         DictateLanguage("af", "Afrikaans"),
         DictateLanguage("sq", "Albanian"),
         DictateLanguage("am", "Amharic"),

@@ -273,8 +273,14 @@ internal fun OwnServerSetup(
                     status = (status.orEmpty() + " The server listed no models; type the model names below.").trim()
                 } else {
                     status = (status.orEmpty() + " ${list.size} models found.").trim()
-                    if (sttModel.isBlank()) sttModel = list.firstOrNull { it.looksLikeSpeech() }?.id.orEmpty()
-                    if (chatModel.isBlank()) chatModel = list.firstOrNull { !it.looksLikeSpeech() }?.id.orEmpty()
+                    // Voice Keyboard: the fast English model first; never pre-pick a large model, which costs a
+                    // CPU-only server many seconds per request. The cleanup model is not in this list (it
+                    // comes from the speech server); it comes from the setup code or is typed.
+                    if (sttModel.isBlank() || sttModel !in list.map { it.id }) {
+                        sttModel = (list.firstOrNull { it.id.contains("small.en", ignoreCase = true) }
+                            ?: list.firstOrNull { it.looksLikeSpeech() && !it.id.contains("large", ignoreCase = true) }
+                            ?: list.firstOrNull { it.looksLikeSpeech() })?.id.orEmpty()
+                    }
                 }
             } catch (e: Exception) {
                 // The client's messages never contain the key.
@@ -424,7 +430,7 @@ internal fun OwnServerSetup(
             )
             Spacer(Modifier.height(8.dp))
             ModelField(
-                label = "Cleanup model (AI), empty for none",
+                label = "Cleanup model (AI, e.g. from the QR code), empty for none",
                 value = chatModel,
                 options = models.sortedBy { it.looksLikeSpeech() }.map { it.id },
                 onChange = { chatModel = it },

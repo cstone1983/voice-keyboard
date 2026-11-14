@@ -210,10 +210,10 @@ object DictateLegacyMigrator {
     suspend fun seedDeviceLanguageIfNeeded() {
         val prefs by FlorisPreferenceStore
         if (prefs.dictate.inputLanguagesSeeded.get()) return
-        if (prefs.dictate.inputLanguages.get() == "detect,en") {
+        if (prefs.dictate.inputLanguages.get() == "en,detect") {
             val device = DictateLanguages.matchDevice(Locale.getDefault())
             if (device != null && device.code != "en" && device.code != DictateLanguages.DETECT) {
-                prefs.dictate.inputLanguages.set("detect,en,${device.code}")
+                prefs.dictate.inputLanguages.set("en,detect,${device.code}")
             }
         }
         prefs.dictate.inputLanguagesSeeded.set(true)

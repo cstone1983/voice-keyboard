@@ -32,7 +32,8 @@ class ModelCatalogTest : FunSpec({
 
     test("every shipped provider has an entry, apart from those whose models are the user's") {
         presets.map { it.id }.filter { it !in ModelCatalog.providerIds }.shouldBeEmpty()
-        (ModelCatalog.providerIds - ProviderRegistry.presets.map { it.id }.toSet()).shouldBeEmpty()
+        // Voice Keyboard: Dictate Cloud keeps its catalog entry but is not among the presets offered.
+        (ModelCatalog.providerIds - ProviderRegistry.presets.map { it.id }.toSet() - ProviderRegistry.CLOUD.id).shouldBeEmpty()
     }
 
     test("every model a preset offers has an entry with the role it is offered for") {

@@ -140,7 +140,11 @@ class DictateApiException(
                     ((status == 400 || status == 404) && hay.contains("for this model")) ||
                     // And its 404 for a model id it does not know, a typo included: "Model 'gemini-3.5-
                     // transcribe-x' not found. Did you mean 'gemini-3.5-transcribe'?" (2026-11-02).
-                    (status == 404 && hay.contains("model") && hay.contains("not found")) -> Kind.MODEL_UNAVAILABLE
+                    (status == 404 && hay.contains("model") && hay.contains("not found")) ||
+                    // Voice Keyboard: a self-hosted speech server (speaches) naming a model it does not have.
+                    ((status == 400 || status == 404 || status == 422) && hay.contains("model") &&
+                        (hay.contains("not found") || hay.contains("not installed") || hay.contains("unknown") ||
+                            hay.contains("not available") || hay.contains("isn't") || hay.contains("is not"))) -> Kind.MODEL_UNAVAILABLE
                 status == 401 || status == 403 ||
                     hay.contains("api key") || hay.contains("api_key") || hay.contains("invalid_api_key") ||
                     hay.contains("unauthorized") || hay.contains("authentication") -> Kind.INVALID_API_KEY
