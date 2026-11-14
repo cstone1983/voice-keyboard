@@ -15,6 +15,7 @@ import dev.patrickgold.florisboard.dictate.provider.ProviderRegistry
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -56,6 +57,17 @@ class VkLearningApi(
         run(request(path, actAs).post(json.toRequestBody(JSON)).build())
 
     fun delete(path: String, actAs: String? = defaultActAs): String = run(request(path, actAs).delete().build())
+
+    /** Uploads a file as the raw request body (voice clips). */
+    fun postFile(path: String, file: java.io.File, contentType: String, actAs: String? = defaultActAs): String {
+        val longClient = client.newBuilder().writeTimeout(120, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+        val req = request(path, actAs).post(file.asRequestBody(contentType.toMediaType())).build()
+        return longClient.newCall(req).execute().use { resp ->
+            val body = resp.body.string()
+            if (!resp.isSuccessful) throw HttpException(resp.code, "HTTP ${resp.code}")
+            body
+        }
+    }
 
     companion object {
         private val JSON = "application/json; charset=utf-8".toMediaType()

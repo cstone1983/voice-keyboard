@@ -107,6 +107,21 @@ The cleanup model improvises on empty/near-empty input ("text", or 60 s rambles)
 - spoken punctuation ("comma", "period" at a sentence end, "full stop", "question mark",
   "exclamation mark", "new line", "new paragraph") converted before cleanup (English).
 
+## Learning from how the user speaks (2026-11-14)
+
+- Dictation record `POST vk/dictations` after every dictation (with "Learn from my corrections"): id,
+  app, category, lang, stt_model, raw Whisper text, cleaned (inserted), final (same end point as the
+  corrections; "" when the span could not be followed), audio_ms, low_confidence, timings. Queued.
+- low_confidence: `response_format=verbose_json` + `timestamp_granularities[]=word` on the own server
+  when learning is on; words with probability < 0.6 (empty when the server sends no probabilities).
+- "Help it learn my voice" (off): the whole recording (chunks merged) `POST vk/audio?dictation=<id>`
+  after the record, Wi-Fi only by default, max 20 MB, kept in `files/vk_clips` until sent (7 days).
+  "Delete my voice clips" = `DELETE vk/audio` + local clips.
+- Profile `?app=&category=`; cleanup gets "Match this writing style …" + `cleanup_style` and "Do not add
+  these words unless spoken: …" from `cleanup_avoid`.
+- Learning screen: progress from `vk/stats` (accuracy per day as bars, totals, voice minutes, "Voice
+  training: ready / X of 120 minutes"), "avoid" entries deletable, learned styles read-only.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

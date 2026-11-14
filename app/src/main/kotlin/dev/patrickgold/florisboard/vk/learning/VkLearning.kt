@@ -55,6 +55,7 @@ object VkLearning {
     private const val QUEUE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000L
     private const val ANCHOR_CHARS = 30
     private const val READ_CHARS = 2000
+    private const val MAX_CLIP_BYTES = 20L * 1024 * 1024
 
     private val prefs by FlorisPreferenceStore
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -63,7 +64,74 @@ object VkLearning {
 
     // ---- Capture ---------------------------------------------------------------------------------
 
+    /** What one dictation carries to the server besides the edits (POST vk/dictations). */
+    private class Record(
+        val id: String,
+        val raw: String,
+        val cleaned: String,
+        val lowConfidence: List<String>,
+        val cleanupMs: Long,
+        val clip: java.io.File?,
+        val cleanupRejected: Boolean,
+    )
+
+    // The dictation in progress: filled while it is transcribed and cleaned, taken at insert time.
+    private val pendingLow = mutableListOf<String>()
+    @Volatile private var pendingRaw = ""
+    @Volatile private var pendingCleanupMs = 0L
+    @Volatile private var pendingClip: java.io.File? = null
+    @Volatile private var appContext: android.content.Context? = null
+
+    /** A new dictation starts (recording stopped or chunked recording started). */
+    fun beginDictation() {
+        synchronized(pendingLow) { pendingLow.clear() }
+        pendingRaw = ""
+        pendingCleanupMs = 0L
+        pendingClip?.delete()
+        pendingClip = null
+    }
+
+    fun noteRaw(text: String) { pendingRaw = text }
+    fun noteCleanupMs(ms: Long) { pendingCleanupMs = ms }
+    fun addLowConfidence(words: List<String>) {
+        if (words.isNotEmpty()) synchronized(pendingLow) { pendingLow.addAll(words) }
+    }
+
+    /** Whether to ask the speech server for word confidence (learning on, own server). */
+    fun wantsWordConfidence(): Boolean =
+        prefs.dictate.vkLearnCorrections.get() && VkLearningApi.forActiveServer(prefs) != null
+
+    /** The whole recording of this dictation, kept for upload when "Help it learn my voice" is on. */
+    fun noteAudio(context: android.content.Context, file: java.io.File?) {
+        appContext = context.applicationContext
+        if (!prefs.dictate.vkLearnVoice.get() || file == null || !file.exists()) return
+        if (file.length() <= 44 || file.length() > MAX_CLIP_BYTES || !file.name.endsWith(".wav")) return
+        runCatching {
+            val dir = java.io.File(context.filesDir, "vk_clips").apply { mkdirs() }
+            val copy = java.io.File(dir, java.util.UUID.randomUUID().toString() + ".wav")
+            file.copyTo(copy, overwrite = true)
+            pendingClip?.delete()
+            pendingClip = copy
+        }
+    }
+
+    private fun takeRecord(cleaned: String, cleanupRejected: Boolean): Record {
+        val low = synchronized(pendingLow) { pendingLow.toList().also { pendingLow.clear() } }
+        val clip = pendingClip
+        pendingClip = null
+        return Record(
+            id = java.util.UUID.randomUUID().toString(),
+            raw = pendingRaw,
+            cleaned = cleaned,
+            lowConfidence = low.distinct(),
+            cleanupMs = pendingCleanupMs,
+            clip = clip,
+            cleanupRejected = cleanupRejected,
+        )
+    }
+
     private class Tracked(
+        val record: Record,
         val app: String,
         val fieldId: Int,
         val inserted: String,
@@ -99,19 +167,30 @@ object VkLearning {
     }
 
     /** A dictation was just inserted into the keyboard's field; the cursor sits right after it. */
-    fun onDictationInserted(inserted: String, sttModel: String) {
+    fun onDictationInserted(inserted: String, sttModel: String, cleanupRejected: Boolean = false) {
         val text = inserted.trim()
-        if (!enabled() || text.isEmpty()) return
+        val record = takeRecord(text, cleanupRejected)
+        if (!enabled() || text.isEmpty()) { record.clip?.delete(); return }
         val info = FlorisImeService.currentEditorInfo()
-        if (isPrivateField(info)) return
-        val ic = FlorisImeService.currentInputConnection() ?: return
+        if (isPrivateField(info)) { record.clip?.delete(); return }
         finish(Reason.REPLACED) // a previous dictation in progress ends here
-        val before = ic.getTextBeforeCursor(READ_CHARS, 0)?.toString() ?: return
-        val after = ic.getTextAfterCursor(READ_CHARS, 0)?.toString().orEmpty()
-        val trimmedBefore = before.trimEnd()
-        if (!trimmedBefore.endsWith(text)) return // not where we think it is; do not guess
+        val app = info!!.packageName.orEmpty()
+        val lang = languageCode()
+        val ic = FlorisImeService.currentInputConnection()
+        val before = ic?.getTextBeforeCursor(READ_CHARS, 0)?.toString()
+        val after = ic?.getTextAfterCursor(READ_CHARS, 0)?.toString().orEmpty()
+        val trimmedBefore = before?.trimEnd()
+        if (trimmedBefore == null || !trimmedBefore.endsWith(text)) {
+            // Not where we think it is: no corrections, but the dictation itself still counts (final unknown).
+            scope.launch {
+                kotlinx.coroutines.delay(3_000) // let the timings of this dictation land first
+                sendRecord(record, app, lang, sttModel, final = "")
+            }
+            return
+        }
         val prefix = trimmedBefore.dropLast(text.length).takeLast(ANCHOR_CHARS)
         tracked = Tracked(
+            record = record,
             app = info!!.packageName.orEmpty(),
             fieldId = info.fieldId,
             inserted = text,
@@ -164,7 +243,9 @@ object VkLearning {
         val t = tracked ?: return
         tracked = null
         val final = t.lastSpan.trim()
-        if (prefs.dictate.vkLearnCorrections.get()) {
+        sendRecord(t.record, t.app, t.lang, t.sttModel, final)
+        // Not from a dictation whose cleanup answer was thrown away: its text is not something to learn from.
+        if (prefs.dictate.vkLearnCorrections.get() && !t.record.cleanupRejected) {
             val edits = CorrectionDiff.edits(t.inserted, final)
             if (edits.isNotEmpty()) {
                 val body = buildJsonObject {
@@ -192,6 +273,39 @@ object VkLearning {
             }
             enqueue("vk/messages", body.toString())
             Log.i(TAG, "queued message reason=$reason")
+        }
+    }
+
+    /** POST vk/dictations (with "Learn from my corrections"), then the voice clip (with "Help it learn my voice"). */
+    private fun sendRecord(r: Record, app: String, lang: String, sttModel: String, final: String) {
+        if (prefs.dictate.vkLearnCorrections.get()) {
+            val t = dev.patrickgold.florisboard.dictate.DictationTimings.entries.value.firstOrNull()
+                ?.takeIf { System.currentTimeMillis() - it.finishedAtMillis < 10 * 60_000L }
+            val body = buildJsonObject {
+                put("id", r.id)
+                put("app", app)
+                put("category", categoryOf(app))
+                put("lang", lang)
+                put("stt_model", sttModel)
+                put("raw", r.raw)
+                put("cleaned", r.cleaned)
+                put("final", final)
+                put("audio_ms", t?.let { e -> e.chunks.sumOf { it.audioMs }.takeIf { it > 0 } ?: e.recordedMs } ?: 0L)
+                put("low_confidence", buildJsonArray { r.lowConfidence.forEach { add(JsonPrimitive(it)) } })
+                put("timings", buildJsonObject {
+                    put("stop_to_text_ms", t?.stopToTextMs ?: 0L)
+                    put("transcribe_ms", t?.let { e -> e.chunks.sumOf { it.transcribeMs }.takeIf { it > 0 } ?: e.transcribeAfterStopMs } ?: 0L)
+                    put("cleanup_ms", r.cleanupMs)
+                })
+            }
+            enqueue("vk/dictations", body.toString())
+            Log.i(TAG, "queued dictation record low=${r.lowConfidence.size}")
+        }
+        val clip = r.clip ?: return
+        if (prefs.dictate.vkLearnVoice.get() && clip.exists()) {
+            enqueueAudio(r.id, clip)
+        } else {
+            clip.delete()
         }
     }
 
@@ -224,6 +338,28 @@ object VkLearning {
 
     // ---- Upload queue ----------------------------------------------------------------------------
 
+    private fun enqueueAudio(dictationId: String, file: java.io.File) {
+        scope.launch {
+            queueMutex.withLock {
+                val items = readQueue().toMutableList()
+                items.add(buildJsonObject {
+                    put("kind", "audio"); put("id", dictationId); put("file", file.absolutePath)
+                    put("ts", System.currentTimeMillis())
+                    VkIdentity.currentUser(prefs)?.let { put("as", it) }
+                })
+                prefs.dictate.vkLearningQueue.set(JsonArray(items).toString())
+            }
+            flush()
+        }
+    }
+
+    private fun onUnmeteredNetwork(): Boolean {
+        val ctx = appContext ?: return false
+        val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            ?: return false
+        return !cm.isActiveNetworkMetered
+    }
+
     private fun enqueue(path: String, body: String) {
         scope.launch {
             queueMutex.withLock {
@@ -252,7 +388,39 @@ object VkLearning {
                 val left = mutableListOf<JsonObject>()
                 for (item in readQueue()) {
                     val ts = item["ts"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: now
-                    if (now - ts > QUEUE_MAX_AGE_MS) continue
+                    val isAudio = item["kind"]?.jsonPrimitive?.contentOrNull == "audio"
+                    if (now - ts > QUEUE_MAX_AGE_MS) {
+                        if (isAudio) item["file"]?.jsonPrimitive?.contentOrNull?.let { java.io.File(it).delete() }
+                        continue
+                    }
+                    if (isAudio) {
+                        val id = item["id"]?.jsonPrimitive?.contentOrNull
+                        val file = item["file"]?.jsonPrimitive?.contentOrNull?.let { java.io.File(it) }
+                        if (id == null || file == null || !file.exists() || !prefs.dictate.vkLearnVoice.get()) {
+                            file?.delete()
+                            continue
+                        }
+                        // After its dictation record, and on Wi-Fi unless the user allows mobile data.
+                        val recordPending = left.any { other ->
+                            other["path"]?.jsonPrimitive?.contentOrNull == "vk/dictations" &&
+                                other["body"]?.jsonPrimitive?.contentOrNull?.contains("\"$id\"") == true
+                        }
+                        if (recordPending || (prefs.dictate.vkVoiceWifiOnly.get() && !onUnmeteredNetwork())) {
+                            left.add(item)
+                            continue
+                        }
+                        val actAsAudio = item["as"]?.jsonPrimitive?.contentOrNull ?: VkIdentity.currentUser(prefs)
+                        try {
+                            api.postFile("vk/audio?dictation=" + java.net.URLEncoder.encode(id, "UTF-8"), file, "audio/wav", actAs = actAsAudio)
+                            file.delete()
+                            Log.i(TAG, "uploaded voice clip bytes=${file.length()}")
+                        } catch (e: VkLearningApi.HttpException) {
+                            if (e.status == 400 || e.status == 401 || e.status == 403 || e.status >= 500) left.add(item) else file.delete()
+                        } catch (e: Exception) {
+                            left.add(item)
+                        }
+                        continue
+                    }
                     val path = item["path"]?.jsonPrimitive?.contentOrNull ?: continue
                     val body = item["body"]?.jsonPrimitive?.contentOrNull ?: continue
                     val actAs = item["as"]?.jsonPrimitive?.contentOrNull ?: VkIdentity.currentUser(prefs)
@@ -283,6 +451,8 @@ object VkLearning {
         val replacements: List<Replacement>,
         val cleanupStyle: String,
         val styleExamples: List<String>,
+        /** Words the cleanup keeps adding that the user removes. */
+        val cleanupAvoid: List<String> = emptyList(),
     )
 
     @Volatile private var currentApp: String = ""
@@ -301,7 +471,9 @@ object VkLearning {
             if (System.currentTimeMillis() - fetchedAt < PROFILE_MAX_AGE_MS) return@launch
             val api = VkLearningApi.forActiveServer(prefs) ?: return@launch
             runCatching {
-                val body = api.get("vk/profile?app=" + java.net.URLEncoder.encode(app, "UTF-8"))
+                val body = api.get(
+                    "vk/profile?app=" + java.net.URLEncoder.encode(app, "UTF-8") + "&category=" + categoryOf(app),
+                )
                 val profile = json.parseToJsonElement(body).jsonObject
                 val updated = JsonObject(cache + (key to JsonObject(profile + ("fetched_at" to JsonPrimitive(System.currentTimeMillis())))))
                 prefs.dictate.vkProfileCache.set(updated.toString())
@@ -334,9 +506,11 @@ object VkLearning {
             val count = (o["count"] as? JsonPrimitive)?.intOrNull ?: 2
             if (from.isBlank() || count < 2) null else Replacement(from, to)
         }
+        val avoid = (obj["cleanup_avoid"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { s -> s.isNotBlank() } }
         val examples = (obj["style_examples"] as? JsonArray).orEmpty()
             .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { s -> s.isNotBlank() } }
-        return Profile(str("version"), str("whisper_prompt"), reps, str("cleanup_style"), examples.take(3))
+        return Profile(str("version"), str("whisper_prompt"), reps, str("cleanup_style"), examples.take(3), avoid)
     }
 
     /** Learned fix rules, applied to a transcription before cleanup: whole words, case kept. */
@@ -366,7 +540,13 @@ object VkLearning {
         val p = profile()
         return buildString {
             append("Fix only filler words, grammar and punctuation. Do not change the wording or the tone, and do not add words (for example \"please\").")
-            if (p != null && p.cleanupStyle.isNotBlank()) append("\nThe writer's style: ").append(p.cleanupStyle.trim())
+            if (p != null && p.cleanupStyle.isNotBlank()) {
+                append("\nMatch this writing style (tone and wording only; keep correct grammar and punctuation):\n")
+                append(p.cleanupStyle.trim())
+            }
+            if (p != null && p.cleanupAvoid.isNotEmpty()) {
+                append("\nDo not add these words unless spoken: ").append(p.cleanupAvoid.joinToString(", "))
+            }
             if (p != null && p.styleExamples.isNotEmpty()) {
                 append("\nExamples of how the writer writes:")
                 p.styleExamples.forEach { append("\n- ").append(it.trim()) }
@@ -403,5 +583,12 @@ object VkLearning {
         prefs.dictate.vkProfileCache.set("{}")
         prefs.dictate.vkLearningQueue.set("[]")
         tracked = null
+        deleteLocalClips()
+    }
+
+    /** Voice clips waiting on this phone for upload. */
+    fun deleteLocalClips() {
+        pendingClip = null
+        appContext?.let { java.io.File(it.filesDir, "vk_clips").deleteRecursively() }
     }
 }

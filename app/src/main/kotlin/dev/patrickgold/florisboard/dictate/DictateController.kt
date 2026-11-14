@@ -1835,6 +1835,7 @@ object DictateController {
         }
         // Voice Keyboard timing: a single upload after stop.
         DictationTimings.begin()
+        dev.patrickgold.florisboard.vk.learning.VkLearning.beginDictation()
         DictationTimings.markStop()
         // Real-time recording (#128): finalize the stream instead of uploading the whole file.
         if (realtimeSession != null) {
@@ -2230,6 +2231,8 @@ object DictateController {
                     // Null for "detect" so the provider auto-detects; otherwise the chosen code. For the
                     // chat-audio path the language goes into the instruction (readable name) instead.
                     language = if (chatAudio) null else wireLanguage(model),
+                    // Voice Keyboard: unsure words for learning (own server only).
+                    wordConfidence = !chatAudio && dev.patrickgold.florisboard.vk.learning.VkLearning.wantsWordConfidence(),
                     // Auto-detect on a model that hints a list of languages: name the user's own instead
                     // of detecting from the whole world (#99). Everything else ignores this.
                     expectedLanguages = if (chatAudio) emptyList() else expectedLanguages(),
@@ -2349,6 +2352,7 @@ object DictateController {
                     pendingHistoryId = pendingHistoryId,
                 )
                 val finalizeStartedNanos = SystemClock.elapsedRealtimeNanos()
+                dev.patrickgold.florisboard.vk.learning.VkLearning.addLowConfidence(result.lowConfidenceWords)
                 finalizeAndCommit(
                     appContext,
                     result.text,
@@ -2499,6 +2503,9 @@ object DictateController {
         // Voice Keyboard: the learned fix rules for repeated mishears, before anything else sees the text.
         // Then spoken punctuation ("comma", "question mark", "new line"), English only.
         vkCleanupRejected = false
+        // For the dictation record: what Whisper returned, and the recording (voice learning, opt-in).
+        dev.patrickgold.florisboard.vk.learning.VkLearning.noteRaw(rawText)
+        dev.patrickgold.florisboard.vk.learning.VkLearning.noteAudio(appContext, capture?.audioFile)
         @Suppress("NAME_SHADOWING")
         val rawText = dev.patrickgold.florisboard.vk.learning.VkLearning.applyReplacements(rawText).let { t ->
             if (prefs.dictate.activeInputLanguage.get().let { it.startsWith("en") || it == DictateLanguages.DETECT }) {
@@ -2705,12 +2712,13 @@ object DictateController {
         // Re-insert safety net (issue #111) + lifetime stats (issue #142) + history log (issue #140).
         rememberLastDictation(appContext, dictated)
         // Voice Keyboard: follow what was just written, to learn from the user's corrections (opt-in).
-        // Not when the cleanup answer was thrown away: what went in is not something to learn from.
-        if (outputTarget == OutputTarget.IME && inField.isNotEmpty() && !vkCleanupRejected) {
+        // A rejected cleanup answer is still a dictation, but its text is not learned from (see VkLearning).
+        if (outputTarget == OutputTarget.IME && inField.isNotEmpty()) {
             val account = transcriptionAccount()
             runCatching {
                 dev.patrickgold.florisboard.vk.learning.VkLearning.onDictationInserted(
                     inField, transcriptionModelFor(appContext, account, presetFor(account)),
+                    cleanupRejected = vkCleanupRejected,
                 )
             }
         }
@@ -3189,6 +3197,7 @@ object DictateController {
     private fun initSegmented(appContext: Context) {
         synchronized(segmentUploadGates) { segmentUploadGates.clear() }
         DictationTimings.begin()
+        dev.patrickgold.florisboard.vk.learning.VkLearning.beginDictation()
         segmentedActive = true
         segmentNextIndex = 0
         segmentCommitIndex = 0
@@ -3199,7 +3208,9 @@ object DictateController {
         segmentRecordedSeconds = 0L
         _segmentFlushCount.value = 0
         // Keep + merge the segment audio only when the history feature would actually store it.
-        segmentKeepAudio = prefs.dictate.historyEnabled.get() && prefs.dictate.historyAudioRetention.get()
+        segmentKeepAudio = (prefs.dictate.historyEnabled.get() && prefs.dictate.historyAudioRetention.get()) ||
+            // Voice Keyboard: "Help it learn my voice" needs the whole recording, all chunks merged.
+            prefs.dictate.vkLearnVoice.get()
         realtimeShown.setLength(0)
         realtimeShownTranscript = ""
         realtimeHandedOver = ""
@@ -3591,6 +3602,7 @@ object DictateController {
             audioFile = packed ?: toUpload, model = model, language = language, prompt = prompt,
             expectedLanguages = expectedLanguages(), vocabulary = customWordList(prefs),
             reasoningEffort = transcriptionReasoningWire(account, preset, model),
+            wordConfidence = dev.patrickgold.florisboard.vk.learning.VkLearning.wantsWordConfidence(),
         )
         var fallbackEngine: HistoryEngine? = null
         return try {
@@ -3647,6 +3659,7 @@ object DictateController {
                     }
                 }
             }
+            dev.patrickgold.florisboard.vk.learning.VkLearning.addLowConfidence(result.lowConfidenceWords)
             SegmentText(result.text, fallbackEngine)
         } catch (c: CancellationException) {
             throw c
@@ -4972,6 +4985,7 @@ object DictateController {
                 if (!dev.patrickgold.florisboard.vk.learning.VkCleanup.shouldClean(text)) continue
                 _state.value = UiState.Rewording(p.name ?: context.getString(R.string.dictate__status_rewording))
                 val input = text
+                val cleanupStarted = SystemClock.elapsedRealtime()
                 val cleaned = rewordOrKeep(input) {
                     requestReword(
                         instruction, input, p.reasoning,
@@ -4979,6 +4993,7 @@ object DictateController {
                         maxTokens = dev.patrickgold.florisboard.vk.learning.VkCleanup.maxTokens(input),
                     )
                 }
+                dev.patrickgold.florisboard.vk.learning.VkLearning.noteCleanupMs(SystemClock.elapsedRealtime() - cleanupStarted)
                 text = if (dev.patrickgold.florisboard.vk.learning.VkCleanup.isSane(input, cleaned)) {
                     cleaned
                 } else {

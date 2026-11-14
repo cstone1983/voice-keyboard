@@ -14,6 +14,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -77,6 +80,11 @@ fun VkLearningScreen() = FlorisScreen {
         val excluded by prefs.dictate.vkLearningExcludedApps.collectAsState()
         val user by prefs.dictate.vkSignedInUser.collectAsState()
         var items by remember { mutableStateOf<List<LearnedItem>?>(null) }
+        var styles by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+        var stats by remember { mutableStateOf<VkStats?>(null) }
+        var confirmDeleteVoice by remember { mutableStateOf(false) }
+        val learnVoice by prefs.dictate.vkLearnVoice.collectAsState()
+        val voiceWifiOnly by prefs.dictate.vkVoiceWifiOnly.collectAsState()
         var listError by remember { mutableStateOf<String?>(null) }
         var confirmForget by remember { mutableStateOf(false) }
         var excludedText by remember(excluded) { mutableStateOf(excluded) }
@@ -94,6 +102,7 @@ fun VkLearningScreen() = FlorisScreen {
                     .onSuccess { body ->
                         listError = null
                         items = parseLearned(body)
+                        styles = runCatching { parseStyles(body) }.getOrDefault(emptyList())
                     }
                     .onFailure {
                         if (dev.patrickgold.florisboard.vk.learning.VkIdentity.needsSelection(it)) {
@@ -202,6 +211,37 @@ fun VkLearningScreen() = FlorisScreen {
                 summary = "Sent dictated messages are stored on your server (1 year) so cleanup can match how you write",
                 checked = learnStyle,
             ) { scope.launch { prefs.dictate.vkLearnStyle.set(it) } }
+            SwitchRow(
+                title = "Help it learn my voice",
+                summary = "Stores the audio of your dictations on your server for up to a year, to train speech " +
+                    "recognition on your voice. Off by default.",
+                checked = learnVoice,
+            ) { scope.launch { prefs.dictate.vkLearnVoice.set(it) } }
+            if (learnVoice) {
+                SwitchRow(
+                    title = "Upload voice clips on Wi-Fi only",
+                    summary = "Clips wait on the phone until you are on Wi-Fi (or an unmetered network)",
+                    checked = voiceWifiOnly,
+                ) { scope.launch { prefs.dictate.vkVoiceWifiOnly.set(it) } }
+            }
+            TextButton(onClick = { confirmDeleteVoice = true }) { Text("Delete my voice clips") }
+
+            // Progress: accuracy over time and voice minutes (GET vk/stats).
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Progress", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    scope.launch {
+                        val a = api() ?: return@launch
+                        stats = runCatching { withContext(Dispatchers.IO) { parseStats(a.get("vk/stats")) } }.getOrNull()
+                    }
+                }) { Text("Refresh") }
+            }
+            LaunchedEffect(actingUser) {
+                val a = api() ?: return@LaunchedEffect
+                stats = runCatching { withContext(Dispatchers.IO) { parseStats(a.get("vk/stats")) } }.getOrNull()
+            }
+            VkStatsView(stats)
 
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
@@ -240,6 +280,15 @@ fun VkLearningScreen() = FlorisScreen {
                 }
             }
 
+            if (styles.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Your writing style (learned)", style = MaterialTheme.typography.titleSmall)
+                styles.forEach { (category, style) ->
+                    Text(category.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge)
+                    Text(style, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = { exportLauncher.launch("voice-keyboard-learning.json") }, modifier = Modifier.weight(1f)) {
@@ -251,11 +300,32 @@ fun VkLearningScreen() = FlorisScreen {
             }
         }
 
+        if (confirmDeleteVoice) {
+            AlertDialog(
+                onDismissRequest = { confirmDeleteVoice = false },
+                title = { Text("Delete my voice clips?") },
+                text = { Text("Deletes all voice clips on your server and the ones still waiting on this phone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmDeleteVoice = false
+                        scope.launch {
+                            VkLearning.deleteLocalClips()
+                            val a = api()
+                            val ok = a != null && runCatching { withContext(Dispatchers.IO) { a.delete("vk/audio") } }.isSuccess
+                            Toast.makeText(context, if (ok) "Voice clips deleted" else "Deleted on the phone; the server could not be reached", Toast.LENGTH_SHORT).show()
+                            if (a != null) stats = runCatching { withContext(Dispatchers.IO) { parseStats(a.get("vk/stats")) } }.getOrNull()
+                        }
+                    }) { Text("Delete") }
+                },
+                dismissButton = { TextButton(onClick = { confirmDeleteVoice = false }) { Text("Cancel") } },
+            )
+        }
+
         if (confirmForget) {
             AlertDialog(
                 onDismissRequest = { confirmForget = false },
                 title = { Text("Forget everything?") },
-                text = { Text("Deletes all learned words, rules, corrections and stored messages on your server. This cannot be undone.") },
+                text = { Text("Deletes all learned words, rules, corrections, dictations, styles, stored messages and voice clips on your server. This cannot be undone.") },
                 confirmButton = {
                     TextButton(onClick = {
                         confirmForget = false
@@ -309,5 +379,89 @@ private fun parseLearned(body: String): List<LearnedItem> {
         val count = s(o, "count")?.let { " (×$it)" }.orEmpty()
         out.add(LearnedItem(id, "${s(o, "from").orEmpty()} → ${s(o, "to").orEmpty()}$count"))
     }
+    (obj["avoid"] as? JsonArray)?.forEach { el ->
+        val o = el as? JsonObject ?: return@forEach
+        val id = s(o, "id") ?: return@forEach
+        out.add(LearnedItem(id, "Cleanup must not add: \"${s(o, "word", "text", "value").orEmpty()}\""))
+    }
     return out
+}
+
+/** `styles: [{category, style, updated}]`, shown read-only. */
+private fun parseStyles(body: String): List<Pair<String, String>> {
+    val obj = Json.parseToJsonElement(body).jsonObject
+    return (obj["styles"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val o = el as? JsonObject ?: return@mapNotNull null
+        val style = (o["style"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        ((o["category"] as? JsonPrimitive)?.contentOrNull ?: "other") to style
+    }
+}
+
+private data class VkDay(val day: String, val dictations: Int, val accuracy: Double?)
+private data class VkStats(
+    val days: List<VkDay>,
+    val totalAccuracy: Double?,
+    val totalDictations: Int,
+    val clips: Int,
+    val minutes: Double,
+    val fineTuneReady: Boolean,
+)
+
+private fun parseStats(body: String): VkStats {
+    val obj = Json.parseToJsonElement(body).jsonObject
+    fun num(o: JsonObject?, k: String) = (o?.get(k) as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
+    val days = (obj["days"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val o = el as? JsonObject ?: return@mapNotNull null
+        VkDay(
+            day = (o["day"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+            dictations = num(o, "dictations")?.toInt() ?: 0,
+            accuracy = num(o, "accuracy_pct"),
+        )
+    }
+    val totals = obj["totals"] as? JsonObject
+    val audio = obj["audio"] as? JsonObject
+    return VkStats(
+        days = days,
+        totalAccuracy = num(totals, "accuracy_pct"),
+        totalDictations = num(totals, "dictations")?.toInt() ?: days.sumOf { it.dictations },
+        clips = num(audio, "clips")?.toInt() ?: 0,
+        minutes = num(audio, "minutes") ?: 0.0,
+        fineTuneReady = (audio?.get("fine_tune_ready") as? JsonPrimitive)?.contentOrNull == "true",
+    )
+}
+
+/** Accuracy per day as bars, totals, and voice minutes toward the 120 needed for training. */
+@Composable
+private fun VkStatsView(stats: VkStats?) {
+    if (stats == null) {
+        Text("No progress yet (or the server could not be reached).", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    Text(
+        "Accuracy: ${stats.totalAccuracy?.let { "%.1f %%".format(it) } ?: "–"} over ${stats.totalDictations} dictations",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    stats.days.takeLast(14).forEach { d ->
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+            Text(d.day.takeLast(5), style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(48.dp))
+            val frac = ((d.accuracy ?: 0.0) / 100.0).toFloat().coerceIn(0f, 1f)
+            Box(modifier = Modifier.weight(1f).height(12.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                Box(modifier = Modifier.fillMaxWidth(frac).height(12.dp).background(MaterialTheme.colorScheme.primary))
+            }
+            Text(
+                " ${d.accuracy?.let { "%.0f%%".format(it) } ?: "–"} · ${d.dictations}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Voice clips: %.1f min (%d clips)".format(stats.minutes, stats.clips),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Text(
+        if (stats.fineTuneReady) "Voice training: ready" else "Voice training: %.0f of 120 minutes collected".format(stats.minutes),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }

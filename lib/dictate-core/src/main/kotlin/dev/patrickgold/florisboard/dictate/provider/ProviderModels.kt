@@ -124,10 +124,17 @@ data class TranscriptionRequest(
      * model thinking, not the upload — so the wrapping in [ProgressRequestBody] never happens there.
      */
     val onUpload: ((sent: Long, total: Long) -> Unit)? = null,
+    /**
+     * Voice Keyboard: ask an OpenAI-style server for `verbose_json` with word timestamps and report the words
+     * it was unsure of ([TranscriptionResult.lowConfidenceWords]). Only the multipart path reads it.
+     */
+    val wordConfidence: Boolean = false,
 )
 
 data class TranscriptionResult(
     val text: String,
     /** The tokens the model spent thinking, where the provider says (Gemini's `generateContent`, #477); else null. */
     val thinkingTokens: Long? = null,
+    /** Voice Keyboard: words with a probability under 0.6, when [TranscriptionRequest.wordConfidence] was set. */
+    val lowConfidenceWords: List<String> = emptyList(),
 )

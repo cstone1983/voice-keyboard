@@ -334,9 +334,31 @@ class OpenAiCompatibleClient(
             }
         }
         val body = executeForBody(httpRequest, onRetry = onRetry)
+        if (request.wordConfidence) {
+            parseVerboseWithConfidence(body)?.let { return it }
+        }
         val response = decode(TranscriptionResponseDto.serializer(), body)
         return TranscriptionResult(response.text.trim())
     }
+
+    /**
+     * Voice Keyboard: `verbose_json` with `words: [{word, probability}]` (faster-whisper / speaches). Null when
+     * the body is not that shape, so the caller falls back to the plain decode.
+     */
+    private fun parseVerboseWithConfidence(body: String): TranscriptionResult? = runCatching {
+        val obj = kotlinx.serialization.json.Json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject
+            ?: return null
+        val text = (obj["text"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return null
+        val words = (obj["words"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { el ->
+            val w = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val word = (w["word"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.trim()
+                ?.trim { !it.isLetterOrDigit() }?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            val p = (w["probability"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()
+                ?: return@mapNotNull null
+            if (p < 0.6) word else null
+        }
+        TranscriptionResult(text.trim(), lowConfidenceWords = words)
+    }.getOrNull()
 
     /**
      * Builds the standard streaming multipart request shared by OpenAI-style STT endpoints. [extraParts]
@@ -354,8 +376,9 @@ class OpenAiCompatibleClient(
             // [audioUploadNameOf], which carries the measurement that proves it.
             .addFormDataPart("file", audioUploadNameOf(request.audioFile), fileBody)
             .addFormDataPart("model", request.model)
-            .addFormDataPart("response_format", "json")
+            .addFormDataPart("response_format", if (request.wordConfidence) "verbose_json" else "json")
             .apply {
+                if (request.wordConfidence) addFormDataPart("timestamp_granularities[]", "word")
                 val lang = request.language?.takeIf { it.isNotEmpty() && it != "detect" }
                 if (usesLanguagesField(request.model)) {
                     // gpt-transcribe replaced the singular `language` with `languages`, "a list of

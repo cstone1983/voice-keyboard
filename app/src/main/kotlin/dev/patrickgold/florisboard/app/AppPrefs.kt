@@ -754,6 +754,9 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         // Voice Keyboard learning (Phase 2). Everything stays on the user's own server.
         val vkLearnCorrections = boolean(key = "vk__learn_corrections", default = false)
         val vkLearnStyle = boolean(key = "vk__learn_style", default = false)
+        // "Help it learn my voice": full recordings to the user's server (kept up to a year there).
+        val vkLearnVoice = boolean(key = "vk__learn_voice", default = false)
+        val vkVoiceWifiOnly = boolean(key = "vk__voice_wifi_only", default = true)
         // Package names, one per line, never learned from.
         val vkLearningExcludedApps = string(key = "vk__learning_excluded_apps", default = "")
         // Offline queue of pending learning uploads (JSON), and the cached profiles per app (JSON).
