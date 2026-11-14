@@ -1,0 +1,485 @@
+/*
+ * Copyright (C) 2026 Voice Keyboard contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+package dev.patrickgold.florisboard.app.setup
+
+import android.content.ClipboardManager
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.GlobalHistogramBinarizer
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.qrcode.QRCodeReader
+import dev.patrickgold.florisboard.app.FlorisPreferenceModel
+import dev.patrickgold.florisboard.app.FlorisPreferenceStore
+import dev.patrickgold.florisboard.dictate.dictateProxyConfig
+import dev.patrickgold.florisboard.dictate.provider.ModelInfo
+import dev.patrickgold.florisboard.dictate.provider.OpenAiCompatibleClient
+import dev.patrickgold.florisboard.dictate.provider.ProviderAccount
+import dev.patrickgold.florisboard.dictate.provider.ProviderRegistry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.File
+import java.net.URI
+import java.util.concurrent.TimeUnit
+
+/** What the own-server form hands back when the user saves it. */
+internal data class OwnServerChoice(
+    val baseUrl: String,
+    val apiKey: String,
+    val transcriptionModel: String,
+    /** Empty when the user wants no AI cleanup. */
+    val chatModel: String,
+    val models: List<String>,
+    val transcriptionModels: List<String>,
+)
+
+/**
+ * The server's setup code (shown as a QR code): one line of JSON,
+ * `{"v":1,"base_url":"https://…/v1/","api_key":"<key>"}`. Unknown fields are ignored so the server can add
+ * more later; optional model fields are read if present.
+ */
+internal data class OwnServerSetupCode(
+    val baseUrl: String,
+    val apiKey: String,
+    val transcriptionModel: String? = null,
+    val chatModel: String? = null,
+)
+
+internal fun parseOwnServerSetupCode(text: String): OwnServerSetupCode? {
+    val obj: JsonObject = try {
+        Json.parseToJsonElement(text.trim()).jsonObject
+    } catch (_: Exception) {
+        return null
+    }
+    fun str(vararg names: String): String? = names.firstNotNullOfOrNull { name ->
+        (obj[name] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.takeIf { it.isNotEmpty() }
+    }
+    val version = (obj["v"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 1
+    if (version > 1 && str("base_url") == null) return null
+    val baseUrl = str("base_url", "url") ?: return null
+    if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) return null
+    return OwnServerSetupCode(
+        baseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/",
+        apiKey = str("api_key", "key").orEmpty(),
+        transcriptionModel = str("stt_model", "transcription_model"),
+        chatModel = str("chat_model", "cleanup_model"),
+    )
+}
+
+/** Reads a QR code from a photo or screenshot. Null if none was found. */
+private fun decodeQr(context: Context, uri: Uri): String? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+    if (longest <= 0) return null
+    var sample = 1
+    while (longest / (sample * 2) >= 1600) sample *= 2
+    val bitmap: Bitmap = context.contentResolver.openInputStream(uri)?.use {
+        BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+    } ?: return null
+    val pixels = IntArray(bitmap.width * bitmap.height)
+    bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+    val source = RGBLuminanceSource(bitmap.width, bitmap.height, pixels)
+    bitmap.recycle()
+    val hints = mapOf(
+        DecodeHintType.TRY_HARDER to true,
+        DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+    )
+    for (binarizer in listOf(HybridBinarizer(source), GlobalHistogramBinarizer(source))) {
+        try {
+            return QRCodeReader().decode(BinaryBitmap(binarizer), hints).text
+        } catch (_: Exception) {
+            // try the next binarizer
+        }
+    }
+    return null
+}
+
+/** `GET <base_url>../health`; true when the server answers 2xx. No key is sent. */
+private fun checkHealth(baseUrl: String): Boolean {
+    val url = URI(baseUrl).resolve("../health").toString()
+    val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .build()
+    return client.newCall(Request.Builder().url(url).get().build()).execute().use { it.isSuccessful }
+}
+
+/**
+ * Stores the user's own server as a custom endpoint and makes it the active transcription provider, and
+ * the rewording (cleanup) provider when a cleanup model was picked. An existing "My server" account with
+ * the same address is updated rather than duplicated.
+ */
+internal suspend fun FlorisPreferenceModel.saveOwnServer(choice: OwnServerChoice) {
+    val accounts = dictate.providerAccounts.get()
+    val existing = accounts.accounts.values.firstOrNull { it.isCustom && it.customBaseUrl == choice.baseUrl }
+    val id = existing?.providerId ?: ProviderAccount.newCustomId()
+    val base = existing ?: ProviderAccount(providerId = id, displayName = "My server")
+    val account = base.copy(
+        apiKey = choice.apiKey,
+        customBaseUrl = choice.baseUrl,
+        transcriptionModel = choice.transcriptionModel,
+        chatModel = choice.chatModel,
+        cachedModels = choice.models.ifEmpty { base.cachedModels },
+        cachedTranscriptionModels = choice.transcriptionModels.ifEmpty { base.cachedTranscriptionModels },
+        cachedModelsAt = if (choice.models.isEmpty()) base.cachedModelsAt else System.currentTimeMillis(),
+    )
+    dictate.providerAccounts.set(accounts.put(account))
+    dictate.transcriptionProviderId.set(id)
+    if (choice.chatModel.isNotBlank()) {
+        dictate.rewordingProviderId.set(id)
+    }
+}
+
+/**
+ * Voice Keyboard: setting up a server of the user's own. Fill in by scanning the server's setup QR code
+ * (or pasting it), or by hand; test the connection, load the server's models, pick the speech-to-text and
+ * cleanup models, save.
+ *
+ * Texts are plain English on purpose (personal build, not translated).
+ */
+@Composable
+internal fun OwnServerSetup(
+    onSave: (OwnServerChoice) -> Unit,
+    onBack: (() -> Unit)?,
+) {
+    val prefs by FlorisPreferenceStore
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var baseUrl by rememberSaveable { mutableStateOf("") }
+    var apiKey by rememberSaveable { mutableStateOf("") }
+    var showKey by rememberSaveable { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var models by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
+    var sttModel by rememberSaveable { mutableStateOf("") }
+    var chatModel by rememberSaveable { mutableStateOf("") }
+    var photoFile by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun normalizedUrl(): String = baseUrl.trim().let { if (it.isEmpty() || it.endsWith("/")) it else "$it/" }
+
+    fun testAndLoad() {
+        val url = normalizedUrl()
+        if (!url.startsWith("https://") && !url.startsWith("http://")) {
+            error = "The address must start with https:// (or http:// on your home network)."
+            return
+        }
+        busy = true
+        error = null
+        status = null
+        scope.launch {
+            try {
+                val healthy = withContext(Dispatchers.IO) { runCatching { checkHealth(url) }.getOrDefault(false) }
+                status = if (healthy) "Server reachable." else "No answer from the server's health check; trying anyway."
+                val list = OpenAiCompatibleClient
+                    .from(
+                        ProviderRegistry.custom(url),
+                        apiKey.trim(),
+                        baseUrlOverride = url,
+                        proxy = prefs.dictate.dictateProxyConfig(),
+                        timeoutSeconds = prefs.dictate.requestTimeout.get().toLong(),
+                    )
+                    .listModels()
+                    .filter { it.id.isNotBlank() }
+                    .sortedBy { it.id.lowercase() }
+                models = list
+                if (list.isEmpty()) {
+                    status = (status.orEmpty() + " The server listed no models; type the model names below.").trim()
+                } else {
+                    status = (status.orEmpty() + " ${list.size} models found.").trim()
+                    if (sttModel.isBlank()) sttModel = list.firstOrNull { it.looksLikeSpeech() }?.id.orEmpty()
+                    if (chatModel.isBlank()) chatModel = list.firstOrNull { !it.looksLikeSpeech() }?.id.orEmpty()
+                }
+            } catch (e: Exception) {
+                // The client's messages never contain the key.
+                error = "Could not load models: ${e.message ?: e.javaClass.simpleName}. You can still type the " +
+                    "model names below."
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun applyCode(text: String?, source: String) {
+        val code = text?.let { parseOwnServerSetupCode(it) }
+        if (code == null) {
+            error = "That $source does not contain a Voice Keyboard setup code."
+            return
+        }
+        baseUrl = code.baseUrl
+        apiKey = code.apiKey
+        code.transcriptionModel?.let { sttModel = it }
+        code.chatModel?.let { chatModel = it }
+        models = emptyList()
+        testAndLoad()
+    }
+
+    fun handleImage(uri: Uri) {
+        busy = true
+        error = null
+        scope.launch {
+            val text = withContext(Dispatchers.Default) { runCatching { decodeQr(context, uri) }.getOrNull() }
+            busy = false
+            if (text == null) error = "No QR code found in that picture. Hold the phone steady and fill the frame with it."
+            else applyCode(text, "QR code")
+        }
+    }
+
+    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        val file = photoFile?.let(::File)
+        if (taken && file != null) {
+            handleImage(Uri.fromFile(file))
+        }
+    }
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) handleImage(uri)
+    }
+
+    fun startScan() {
+        // The cache folder the existing scan feature already shares with the camera app.
+        val dir = File(context.cacheDir, "scan-pending").apply { mkdirs() }
+        val file = File(dir, "server-qr.jpg").apply { delete() }
+        photoFile = file.absolutePath
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider.file", file)
+        runCatching { takePicture.launch(uri) }.onFailure { error = "No camera app available." }
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Your own server", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Scan the setup QR code your server shows, or enter its address (ending in /v1/) and API key.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { startScan() }) {
+                Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                Text("  Scan QR code")
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    enabled = !busy,
+                    onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                ) {
+                    Icon(Icons.Default.Image, contentDescription = null)
+                    Text(" QR image")
+                }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    enabled = !busy,
+                    onClick = {
+                        val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip
+                        val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                        applyCode(text, "clipboard text")
+                    },
+                ) {
+                    Icon(Icons.Default.ContentPaste, contentDescription = null)
+                    Text(" Paste code")
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = { baseUrl = it; error = null },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Server address") },
+                placeholder = { Text("https://example.com/v1/") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it; error = null },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("API key") },
+                singleLine = true,
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                trailingIcon = {
+                    IconButton(onClick = { showKey = !showKey }) {
+                        Icon(
+                            imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (showKey) "Hide key" else "Show key",
+                        )
+                    }
+                },
+            )
+            Spacer(Modifier.height(12.dp))
+            FilledTonalButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = baseUrl.isNotBlank() && !busy,
+                onClick = { testAndLoad() },
+            ) {
+                Text(if (models.isEmpty()) "Test connection and load models" else "Reload models")
+            }
+            if (busy) {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            status?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Spacer(Modifier.height(16.dp))
+            ModelField(
+                label = "Speech-to-text model",
+                value = sttModel,
+                options = models.sortedByDescending { it.looksLikeSpeech() }.map { it.id },
+                onChange = { sttModel = it },
+            )
+            Spacer(Modifier.height(8.dp))
+            ModelField(
+                label = "Cleanup model (AI), empty for none",
+                value = chatModel,
+                options = models.sortedBy { it.looksLikeSpeech() }.map { it.id },
+                onChange = { chatModel = it },
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy && normalizedUrl().startsWith("http") && sttModel.isNotBlank(),
+                onClick = {
+                    onSave(
+                        OwnServerChoice(
+                            baseUrl = normalizedUrl(),
+                            apiKey = apiKey.trim(),
+                            transcriptionModel = sttModel.trim(),
+                            chatModel = chatModel.trim(),
+                            models = models.map { it.id },
+                            transcriptionModels = models.filter { it.isTranscriptionModel }.map { it.id },
+                        ),
+                    )
+                },
+            ) {
+                Text("Save")
+            }
+        }
+    }
+    if (onBack != null) {
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onClick = onBack) { Text("Back to other options") }
+        }
+    }
+}
+
+/** A model name: typed freely, or picked from what the server listed. */
+@Composable
+private fun ModelField(
+    label: String,
+    value: String,
+    options: List<String>,
+    onChange: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(label) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+            trailingIcon = {
+                if (options.isNotEmpty()) {
+                    IconButton(onClick = { open = true }) {
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose a model")
+                    }
+                }
+            },
+        )
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            modifier = Modifier.heightIn(max = 360.dp),
+        ) {
+            options.forEach { id ->
+                DropdownMenuItem(text = { Text(id) }, onClick = { onChange(id); open = false })
+            }
+        }
+    }
+}
+
+/** Speech models by catalog flag or by the usual names (Whisper, faster-whisper, Parakeet, ...). */
+private fun ModelInfo.looksLikeSpeech(): Boolean =
+    isTranscriptionModel || SPEECH_HINTS.any { id.contains(it, ignoreCase = true) }
+
+private val SPEECH_HINTS = listOf("whisper", "transcrib", "parakeet", "stt", "speech", "canary", "moonshine")

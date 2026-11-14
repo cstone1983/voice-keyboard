@@ -95,6 +95,7 @@ import dev.patrickgold.florisboard.dictate.provider.LocalModelCatalog
 import dev.patrickgold.florisboard.dictate.provider.LocalModelDownloads
 import dev.patrickgold.florisboard.dictate.provider.LocalModelManager
 import dev.patrickgold.florisboard.dictate.provider.LocalModelSpec
+import dev.patrickgold.florisboard.dictate.provider.ProviderAccount
 import dev.patrickgold.florisboard.dictate.provider.ProviderAccounts
 import dev.patrickgold.florisboard.dictate.provider.ProviderRegistry
 import dev.patrickgold.florisboard.dictate.provider.TranscriptionApi
@@ -373,6 +374,14 @@ private fun PreferenceUiScope<FlorisPreferenceModel>.steps(
         }
     }
 
+    /**
+     * Voice Keyboard: stores the user's own server as a custom endpoint and makes it the active
+     * transcription provider, and the rewording (cleanup) provider when a cleanup model was picked.
+     */
+    fun saveOwnServer(choice: OwnServerChoice) {
+        scope.launch { this@steps.prefs.saveOwnServer(choice) }
+    }
+
     /** Points the on-device engine at [modelId] and makes it the active transcription provider. */
     fun activateLocalModel(modelId: String) {
         scope.launch {
@@ -453,6 +462,7 @@ private fun PreferenceUiScope<FlorisPreferenceModel>.steps(
                 onActivateLocalModel = ::activateLocalModel,
                 onOpenAllModels = { openProviderEditor(ProviderRegistry.LOCAL.id) },
                 onOpenServerEditor = { openProviderEditor(ProviderSetupHandoff.ADD_CUSTOM) },
+                onSaveOwnServer = ::saveOwnServer,
             )
         },
         FlorisStep(
@@ -532,6 +542,7 @@ private fun FlorisStepLayoutScope.ProviderSetupStep(
     onActivateLocalModel: (modelId: String) -> Unit,
     onOpenAllModels: () -> Unit,
     onOpenServerEditor: () -> Unit,
+    onSaveOwnServer: (OwnServerChoice) -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -572,8 +583,17 @@ private fun FlorisStepLayoutScope.ProviderSetupStep(
                 onChooseCloud = onOpenCloud,
                 onChooseOwnKey = { branch = ProviderBranch.OWN_KEY },
                 onChooseOnDevice = { branch = ProviderBranch.ON_DEVICE },
-                onChooseServer = onOpenServerEditor,
+                // Voice Keyboard: own server is set up right here (address, key, models) instead of
+                // leaving for the provider editor.
+                onChooseServer = { branch = ProviderBranch.OWN_SERVER },
                 onSkip = onSkip,
+            )
+            return
+        }
+        ProviderBranch.OWN_SERVER -> {
+            OwnServerSetup(
+                onSave = onSaveOwnServer,
+                onBack = { branch = ProviderBranch.CHOICE },
             )
             return
         }
@@ -829,23 +849,21 @@ private fun FlorisStepLayoutScope.ProviderChoice(
     onChooseServer: () -> Unit,
     onSkip: () -> Unit,
 ) {
-    StepText(stringRes(R.string.setup__provider__choose_intro))
+    StepText(stringRes(R.string.setup__provider__choose_intro_vk))
     Spacer(modifier = Modifier.height(16.dp))
 
-    // Voice Keyboard: the Dictate Cloud card is left out (no paid cloud in this build).
+    // Voice Keyboard: this build is made for a server of the user's own, so that is the headline card;
+    // cloud providers and the on-device engine are the quieter options. Dictate Cloud is left out.
     ChoiceCard(
-        title = stringRes(R.string.setup__provider__choice_own_title),
-        body = stringRes(R.string.setup__provider__choice_own_body),
-        buttonLabel = stringRes(R.string.setup__provider__choice_own_btn),
-        onClick = onChooseOwnKey,
-        // A row of provider marks, because "many to choose from" is the whole point of this option
-        // and a sentence saying so is weaker than seeing the logos.
-        marks = listOf("groq", "openai", "gemini", "anthropic", "mistral", "deepgram", "elevenlabs"),
+        title = stringRes(R.string.setup__provider__choice_server_title),
+        body = stringRes(R.string.setup__provider__choice_server_body),
+        buttonLabel = stringRes(R.string.setup__provider__choice_server_btn),
+        onClick = onChooseServer,
     )
 
     Spacer(modifier = Modifier.height(20.dp))
     Text(
-        text = stringRes(R.string.setup__provider__more_ways),
+        text = stringRes(R.string.setup__provider__more_ways_vk),
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = 8.dp),
@@ -853,19 +871,17 @@ private fun FlorisStepLayoutScope.ProviderChoice(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column {
             MoreWayRow(
+                icon = Icons.Default.VpnKey,
+                title = stringRes(R.string.setup__provider__choice_own_title),
+                body = stringRes(R.string.setup__provider__choice_own_body),
+                onClick = onChooseOwnKey,
+            )
+            HorizontalDivider()
+            MoreWayRow(
                 icon = Icons.Default.Download,
                 title = stringRes(R.string.setup__provider__choice_local_title),
                 body = stringRes(R.string.setup__provider__choice_local_body),
                 onClick = onChooseOnDevice,
-            )
-            HorizontalDivider()
-            MoreWayRow(
-                // The same mark the settings list gives a server of the user's own, so the two read as
-                // the same thing in both places.
-                icon = Icons.Default.Dns,
-                title = stringRes(R.string.setup__provider__choice_server_title),
-                body = stringRes(R.string.setup__provider__choice_server_body),
-                onClick = onChooseServer,
             )
         }
     }
@@ -1122,7 +1138,7 @@ private fun deviceLanguage(context: Context): String =
         ?: Locale.getDefault().language
 
 /** Which way through the provider step the user is currently on. */
-private enum class ProviderBranch { CHOICE, OWN_KEY, ON_DEVICE }
+private enum class ProviderBranch { CHOICE, OWN_KEY, ON_DEVICE, OWN_SERVER }
 
 /**
  * One of the two ways in, with the marks of what it actually connects to.

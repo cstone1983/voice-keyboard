@@ -273,6 +273,8 @@ dependencies {
     // Next to the 26 MB of libonnxruntime.so this app already ships, and play-services-base/-basement
     // already come in via play-services-wearable.
     implementation(libs.mlkit.text.recognition)
+    // Voice Keyboard: reads the server setup QR code from a photo (Apache-2.0, pure Java).
+    implementation(libs.zxing.core)
     implementation(libs.okhttp)
     implementation(libs.patrickgold.compose.tooltip)
     implementation(libs.patrickgold.jetpref.datastore.model)

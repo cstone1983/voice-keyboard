@@ -48,4 +48,8 @@
     <!-- Media strings -->
     <string name="media__tab__emoticons_label" translatable="false">;-)</string>
     <string name="media__tab__kaomoji_label" translatable="false">(^-^*)/</string>
+    <!-- Voice Keyboard: setup texts for the own-server-first provider step -->
+    <item name="setup__provider__choice_server_btn" translatable="false" type="string">Connect my server</item>
+    <item name="setup__provider__choose_intro_vk" translatable="false" type="string">Dictation turns your speech into text through a speech server. Connect your own server here: you need its address (ending in /v1/) and its API key.</item>
+    <item name="setup__provider__more_ways_vk" translatable="false" type="string">Other ways</item>
 </resources>

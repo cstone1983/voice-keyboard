@@ -17,6 +17,22 @@ is handled separately; this repo only needs its base URL and an API key, entered
 | 2026-11-14 | Build and sign in GitHub Actions; signing key kept as repo secrets (key created on a home machine, root-only) | Key never in git or chat. Every CI build gets a growing versionCode so it installs over the previous one. |
 | 2026-11-14 | Install by sideloading: release download, or `tools/install-latest.sh` over wireless debugging from a computer on the phone's network | The cloud build session cannot reach the phone directly. |
 
+## Server setup code (QR)
+
+The server shows a QR code with one line of JSON:
+
+```json
+{"v":1,"base_url":"https://<server>/v1/","api_key":"<64 hex chars>"}
+```
+
+- Unknown fields are ignored; optional `stt_model` / `chat_model` prefill the model fields.
+- Speech-to-text: `base_url + "audio/transcriptions"`; cleanup: `base_url + "chat/completions"`;
+  `Authorization: Bearer <api_key>` on every request. `GET <base_url>../health` answers `ok` without a key
+  and is used as the connection test.
+- The app reads the code by photo (ZXing), from a saved image, or pasted from the clipboard. The key is
+  stored encrypted (Keystore) and never logged.
+- Models are settings, picked from `GET <base_url>models` or typed (they may change after tuning).
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.
@@ -32,6 +48,9 @@ is handled separately; this repo only needs its base URL and an API key, entered
 - `.github/workflows/build.yml`: build, sign, publish releases. Upstream's funding, issue templates and
   monthly-maintenance workflow removed.
 - `tools/install-latest.sh`: install the newest release over adb.
+- Own server first: setup's main card is "Your own server" (`app/setup/OwnServerSetup.kt`: QR scan,
+  paste, address + key, health check, model pickers, save); the same form is in Settings → AI providers
+  → "Connect your own server" (`DictateOwnServerScreen`). Uses `com.google.zxing:core` (Apache-2.0).
 
 ## Status
 

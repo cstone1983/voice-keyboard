@@ -227,6 +227,14 @@ fun DictateProvidersScreen() = FlorisScreen {
             .filter { it.isCustom }
             .sortedBy { it.displayName.lowercase() }
 
+        // Voice Keyboard: the quick way to connect the user's own server (QR code, models).
+        Preference(
+            icon = Icons.Default.Dns,
+            title = "Connect your own server",
+            summary = "Scan the server's QR code or enter its address and key, then pick models",
+            onClick = { navController.navigate(Routes.Settings.DictateOwnServer) },
+        )
+
         PreferenceGroup(title = stringRes(R.string.dictate__providers_active_group)) {
             // The pickers offer only what can do the job right now, plus the current choice (see
             // [ProviderListing.isPickable]); everything else is set up through "Add a provider" first,
