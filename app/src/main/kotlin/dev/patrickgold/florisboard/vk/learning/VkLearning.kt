@@ -98,8 +98,11 @@ object VkLearning {
     }
 
     /** Whether to ask the speech server for word confidence (learning on, own server). */
-    fun wantsWordConfidence(): Boolean =
-        prefs.dictate.vkLearnCorrections.get() && VkLearningApi.forActiveServer(prefs) != null
+    // Off (server measurement 2026-11-14): word timestamps make the CPU-only Whisper align every word, which
+    // doubled transcription time, and the server learns mishears from corrections anyway. The record then
+    // carries "low_confidence": []. The client path stays, for a faster server later.
+    @Suppress("FunctionOnlyReturningConstant")
+    fun wantsWordConfidence(): Boolean = false
 
     /** The whole recording of this dictation, kept for upload when "Help it learn my voice" is on. */
     fun noteAudio(context: android.content.Context, file: java.io.File?) {
@@ -547,10 +550,8 @@ object VkLearning {
             if (p != null && p.cleanupAvoid.isNotEmpty()) {
                 append("\nDo not add these words unless spoken: ").append(p.cleanupAvoid.joinToString(", "))
             }
-            if (p != null && p.styleExamples.isNotEmpty()) {
-                append("\nExamples of how the writer writes:")
-                p.styleExamples.forEach { append("\n- ").append(it.trim()) }
-            }
+            // No style_examples here (server measurement 2026-11-14): reading them on every dictation made
+            // the cleanup 2-3 times slower; the short cleanup_style list carries the style.
         }
     }
 

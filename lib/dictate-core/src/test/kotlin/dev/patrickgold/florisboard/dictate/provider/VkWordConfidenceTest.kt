@@ -50,3 +50,20 @@ class VkWordConfidenceTest : FunSpec({
         }
     }
 })
+
+class VkCleanupRequestTest : FunSpec({
+    test("a cleanup request carries temperature and max_tokens") {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse().setResponseCode(200).setBody(
+                    """{"choices":[{"message":{"role":"assistant","content":"Hello."}}]}""",
+                ),
+            )
+            val client = OpenAiCompatibleClient(ProviderConfig(baseUrl = server.url("/v1/").toString(), apiKey = "test"))
+            client.complete(ChatRequest.ofUser("qwen2.5:3b", "clean this").copy(temperature = 0.2, maxTokens = 70))
+            val body = server.takeRequest().body.readUtf8()
+            body shouldContain "\"temperature\":0.2"
+            body shouldContain "\"max_tokens\":70"
+        }
+    }
+})

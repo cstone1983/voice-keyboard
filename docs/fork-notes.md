@@ -122,6 +122,13 @@ The cleanup model improvises on empty/near-empty input ("text", or 60 s rambles)
 - Learning screen: progress from `vk/stats` (accuracy per day as bars, totals, voice minutes, "Voice
   training: ready / X of 120 minutes"), "avoid" entries deletable, learned styles read-only.
 
+## Speed fix after the learning build (2026-11-14)
+
+Server measured ~9 s stop-to-text (was ~5 s): word timestamps doubled Whisper time on the CPU-only
+server, and three style examples in every cleanup prompt made cleanup 2-3x slower. Now: no word
+timestamps (`low_confidence: []`), cleanup prompt carries only `cleanup_style` and `cleanup_avoid`;
+temperature 0.2 and `max_tokens` (≈ 2× input tokens + 50) confirmed on the wire by a test.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.
