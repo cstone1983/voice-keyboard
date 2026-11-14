@@ -216,7 +216,9 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         // the silent swap is affected — every level shows the same suggestions in the strip.
         val autoCorrectStrength = enum(
             key = "correction__auto_correct_strength",
-            default = AutoCorrectStrength.BALANCED,
+            // Voice Keyboard: whole-key misses are this user's typical error (typing tests), so the level
+            // that fixes them is the default.
+            default = AutoCorrectStrength.AGGRESSIVE,
         )
         val autoSpacePunctuation = boolean(
             key = "correction__auto_space_punctuation",
@@ -1568,7 +1570,8 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         // Voice Keyboard: split typing correction (see SplitTouchCorrection), from the user's typing test.
         val vkSplitTouchCorrection = boolean(key = "vk__split_touch_correction", default = true)
         val vkSplitTouchSpreadPercent = int(key = "vk__split_touch_spread_percent", default = 15)
-        val vkSplitTouchLiftRightPercent = int(key = "vk__split_touch_lift_right_percent", default = 30)
+        // 20 after the second typing test (30 overshot: k→o). New key so the new default applies.
+        val vkSplitTouchLiftRightPercent = int(key = "vk__split_touch_lift_right_percent_v2", default = 20)
         // Swipe typing on a split keyboard (quick taps were read as swipes in the typing test).
         val vkGlideWhenSplit = boolean(key = "vk__glide_when_split", default = false)
         val numberRow = boolean(

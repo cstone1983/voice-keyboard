@@ -41,19 +41,29 @@ class TextKeyboard(
         get() = arrangement.sumOf { it.size }
 
     override fun getKeyForPos(pointerX: Float, pointerY: Float): TextKey? {
+        val (x, y) = vkCorrectedPoint(pointerX, pointerY)
+        return rawKeyForPos(x, y)
+    }
+
+    /**
+     * Voice Keyboard: on a split keyboard, the point a letter touch was aimed at (see
+     * [SplitTouchCorrection]); the touch itself everywhere else. Also what the autocorrect gets as tap
+     * evidence, so it reasons from the same point that chose the key.
+     */
+    fun vkCorrectedPoint(pointerX: Float, pointerY: Float): Pair<Float, Float> {
+        val unchanged = pointerX to pointerY
+        val g = vkSplitGeometry ?: return unchanged
         val raw = rawKeyForPos(pointerX, pointerY)
-        // Voice Keyboard: on a split keyboard, count a letter touch where the thumb was aiming.
-        val g = vkSplitGeometry ?: return raw
-        if (raw == null || !raw.isVkLetterKey()) return raw
+        if (raw == null || !raw.isVkLetterKey()) return unchanged
         val prefs = vkPrefs
-        if (!prefs.keyboard.vkSplitTouchCorrection.get()) return raw
-        val (nx, ny) = SplitTouchCorrection.adjust(
+        if (!prefs.keyboard.vkSplitTouchCorrection.get()) return unchanged
+        val adjusted = SplitTouchCorrection.adjust(
             pointerX, pointerY, g[0], g[1], g[2], g[3], g[4],
             spread = prefs.keyboard.vkSplitTouchSpreadPercent.get() / 100f,
             liftRight = prefs.keyboard.vkSplitTouchLiftRightPercent.get() / 100f,
         )
-        val adjusted = rawKeyForPos(nx, ny)
-        return if (adjusted != null && adjusted.isVkLetterKey()) adjusted else raw
+        val key = rawKeyForPos(adjusted.first, adjusted.second)
+        return if (key != null && key.isVkLetterKey()) adjusted else unchanged
     }
 
     private fun rawKeyForPos(pointerX: Float, pointerY: Float): TextKey? {
