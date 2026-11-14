@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Assignment
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
@@ -248,6 +249,13 @@ fun HomeScreen() = FlorisScreen {
                 dictateContext.startActivity(TranscribeShareActivity.intentFor(dictateContext, uri))
             }
         }
+        // Voice Keyboard: one page for the own server, learning, autocorrect / split typing and dictation.
+        Preference(
+            icon = Icons.Default.Dns,
+            title = "Voice Keyboard",
+            summary = "Your AI server, learning, autocorrect, split typing",
+            onClick = { navController.navigate(Routes.Settings.VkHub) },
+        )
         Preference(
             icon = Icons.Default.Mic,
             title = stringRes(R.string.dictate__title),

@@ -362,57 +362,8 @@ fun DictateRecordingScreen() = FlorisScreen {
                 onDismiss = { showLongformDialog = false },
             )
         }
-        // Voice Keyboard: no raw chunks in the field; only the final cleaned-up text is inserted.
-        SwitchPreference(
-            prefs.dictate.vkHoldTextUntilDone,
-            icon = Icons.Default.Segment,
-            title = "Insert only the final text",
-            summary = "Keep dictated text out of the field until transcription and cleanup are done",
-        )
-        // Voice Keyboard: how long the last dictations took (per chunk, and stop to final text).
-        val timingNav = LocalNavController.current
-        // Voice Keyboard: split typing correction, tuned from the user's typing test.
-        SwitchPreference(
-            prefs.keyboard.vkSplitTouchCorrection,
-            icon = Icons.Default.Segment,
-            title = "Split typing correction",
-            summary = "On the split keyboard, count a touch where your thumb was aiming",
-        )
-        dev.patrickgold.jetpref.datastore.ui.DialogSliderPreference(
-            prefs.keyboard.vkSplitTouchSpreadPercent,
-            title = "Reach correction (outward)",
-            valueLabel = { "$it %" },
-            min = 0,
-            max = 40,
-            stepIncrement = 5,
-        )
-        dev.patrickgold.jetpref.datastore.ui.DialogSliderPreference(
-            prefs.keyboard.vkSplitTouchLiftRightPercent,
-            title = "Right thumb lift (of a row)",
-            valueLabel = { "$it %" },
-            min = 0,
-            max = 60,
-            stepIncrement = 5,
-        )
-        SwitchPreference(
-            prefs.keyboard.vkGlideWhenSplit,
-            icon = Icons.Default.Segment,
-            title = "Swipe typing on the split keyboard",
-            summary = "Off by default: quick taps were read as swipes",
-        )
-        // Voice Keyboard: learning from corrections and writing style (on the user's server).
-        Preference(
-            icon = Icons.Default.Segment,
-            title = "Learning",
-            summary = "Learn from my corrections and my writing style; learned words; forget everything",
-            onClick = { timingNav.navigate(Routes.Settings.VkLearning) },
-        )
-        Preference(
-            icon = Icons.Default.Timer,
-            title = "Dictation timing",
-            summary = "Per-chunk transcription time and time from stop to final text",
-            onClick = { timingNav.navigate(Routes.Settings.DictateTiming) },
-        )
+        // Voice Keyboard: its own settings (server, learning, split typing, final-text insert, timing) are on
+        // the Voice Keyboard page (VkHubScreen), linked from the top of the settings.
         SwitchPreference(
             prefs.dictate.audioFocus,
             icon = Icons.Default.VolumeOff,
