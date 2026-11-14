@@ -97,6 +97,16 @@ swipes. Changes:
 
 Next: repeat the test and adjust the two values.
 
+## Cleanup guards (server finding 2026-11-14)
+
+The cleanup model improvises on empty/near-empty input ("text", or 60 s rambles). `VkCleanup`:
+- transcription under 3 characters: no cleanup request;
+- cleanup requests send `temperature: 0.2` and `max_tokens` ≈ input chars / 2 + 50;
+- output rejected (raw text inserted) when empty, "text", containing `<text`, or < 30 % / > 300 % of
+  the input length; such a dictation is not used for learning;
+- spoken punctuation ("comma", "period" at a sentence end, "full stop", "question mark",
+  "exclamation mark", "new line", "new paragraph") converted before cleanup (English).
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

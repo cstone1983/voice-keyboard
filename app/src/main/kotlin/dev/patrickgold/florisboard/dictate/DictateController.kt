@@ -420,6 +420,8 @@ object DictateController {
     // value it was cut under, and a result from another one is dropped: it belongs to a dictation that is
     // over, and the maps and the field it would write into now belong to the next one (#172).
     private var segmentGeneration = 0
+    /** Voice Keyboard: the last dictation's cleanup answer failed the sanity check (raw text inserted). */
+    private var vkCleanupRejected = false
     // Voice Keyboard: one segment upload at a time, in cut order (the server's Whisper uses every CPU core).
     // Gate i completes when segment i is done (or had nothing to send); segment i+1 waits for it.
     private val segmentUploadGates = HashMap<Int, CompletableDeferred<Unit>>()
@@ -2495,8 +2497,16 @@ object DictateController {
         handedOver: String = "",
     ) {
         // Voice Keyboard: the learned fix rules for repeated mishears, before anything else sees the text.
+        // Then spoken punctuation ("comma", "question mark", "new line"), English only.
+        vkCleanupRejected = false
         @Suppress("NAME_SHADOWING")
-        val rawText = dev.patrickgold.florisboard.vk.learning.VkLearning.applyReplacements(rawText)
+        val rawText = dev.patrickgold.florisboard.vk.learning.VkLearning.applyReplacements(rawText).let { t ->
+            if (prefs.dictate.activeInputLanguage.get().let { it.startsWith("en") || it == DictateLanguages.DETECT }) {
+                dev.patrickgold.florisboard.vk.learning.VkCleanup.spokenPunctuation(t)
+            } else {
+                t
+            }
+        }
         swallowedRewording = null // this dictation's own slate (issue #284)
         // The spoken command word (#139): a transcript that opens with the user's trigger is an
         // instruction, not something to write down — the same thing the live-prompt chip does, said
@@ -2695,7 +2705,8 @@ object DictateController {
         // Re-insert safety net (issue #111) + lifetime stats (issue #142) + history log (issue #140).
         rememberLastDictation(appContext, dictated)
         // Voice Keyboard: follow what was just written, to learn from the user's corrections (opt-in).
-        if (outputTarget == OutputTarget.IME && inField.isNotEmpty()) {
+        // Not when the cleanup answer was thrown away: what went in is not something to learn from.
+        if (outputTarget == OutputTarget.IME && inField.isNotEmpty() && !vkCleanupRejected) {
             val account = transcriptionAccount()
             runCatching {
                 dev.patrickgold.florisboard.vk.learning.VkLearning.onDictationInserted(
@@ -4954,6 +4965,29 @@ object DictateController {
                 continue
             }
             if (!canReword) { noteSkippedRewording(context); continue }
+            if (p.libraryId == "vk-cleanup") {
+                // Voice Keyboard cleanup guards (server finding 2026-11-14): a near-empty transcription is not
+                // sent (the model improvises), the answer is bounded and steady, and an answer that does not
+                // look like a cleaned version of the input is thrown away for the raw text.
+                if (!dev.patrickgold.florisboard.vk.learning.VkCleanup.shouldClean(text)) continue
+                _state.value = UiState.Rewording(p.name ?: context.getString(R.string.dictate__status_rewording))
+                val input = text
+                val cleaned = rewordOrKeep(input) {
+                    requestReword(
+                        instruction, input, p.reasoning,
+                        temperature = dev.patrickgold.florisboard.vk.learning.VkCleanup.TEMPERATURE,
+                        maxTokens = dev.patrickgold.florisboard.vk.learning.VkCleanup.maxTokens(input),
+                    )
+                }
+                text = if (dev.patrickgold.florisboard.vk.learning.VkCleanup.isSane(input, cleaned)) {
+                    cleaned
+                } else {
+                    Log.i(LATENCY_LOG_TAG, "phase=cleanupRejected inChars=${input.length} outChars=${cleaned.length}")
+                    vkCleanupRejected = true
+                    input
+                }
+                continue
+            }
             _state.value = UiState.Rewording(p.name ?: context.getString(R.string.dictate__status_rewording))
             text = rewordOrKeep(text) {
                 requestReword(instruction, text, p.reasoning)
@@ -5101,9 +5135,11 @@ object DictateController {
         instruction: String,
         input: String?,
         reasoning: PromptReasoning = PromptReasoning.ACCOUNT,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
     ): String {
         val content = DictatePromptDefaults.buildRewordingRequest(instruction, systemPrompt(), input)
-        return DictatePromptDefaults.stripTextTags(requestRewordRaw(content, reasoning))
+        return DictatePromptDefaults.stripTextTags(requestRewordRaw(content, reasoning, temperature, maxTokens))
     }
 
     /**
@@ -5113,6 +5149,8 @@ object DictateController {
     private suspend fun requestRewordRaw(
         userContent: String,
         reasoning: PromptReasoning = PromptReasoning.ACCOUNT,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
     ): String {
         val account = rewordingAccount()
         val apiKey = rewordingApiKey()
@@ -5137,7 +5175,8 @@ object DictateController {
         // Reasoning (#141): the account's own setting, unless the prompt asks for a level of its own (#155).
         val reasoningWire = rewordingReasoningWire(account, preset, model, reasoning)
         val result = client.complete(
-            ChatRequest.ofUser(model, userContent, reasoningEffort = reasoningWire),
+            ChatRequest.ofUser(model, userContent, reasoningEffort = reasoningWire)
+                .copy(temperature = temperature, maxTokens = maxTokens),
         ).text.trim()
         // Lifetime statistics (issue #142): every rewording/prompt pass funnels through here.
         DictateStats.recordRewording(prefs)
