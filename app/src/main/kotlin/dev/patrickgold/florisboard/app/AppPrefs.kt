@@ -749,6 +749,11 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         )
         // Voice Keyboard chunking (AUTO mode without Smart Turn): pause that ends a chunk, the least audio a
         // chunk must have before a pause may end it, and the length at which a chunk is cut anyway.
+        // Voice Keyboard: keep the chunks out of the text field until the final, cleaned-up text is ready.
+        val vkHoldTextUntilDone = boolean(
+            key = "vk__hold_text_until_done",
+            default = true,
+        )
         val vkChunkSilenceMs = int(
             key = "vk__chunk_silence_ms",
             default = 500,

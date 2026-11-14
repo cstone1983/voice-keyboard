@@ -362,6 +362,13 @@ fun DictateRecordingScreen() = FlorisScreen {
                 onDismiss = { showLongformDialog = false },
             )
         }
+        // Voice Keyboard: no raw chunks in the field; only the final cleaned-up text is inserted.
+        SwitchPreference(
+            prefs.dictate.vkHoldTextUntilDone,
+            icon = Icons.Default.Segment,
+            title = "Insert only the final text",
+            summary = "Keep dictated text out of the field until transcription and cleanup are done",
+        )
         // Voice Keyboard: how long the last dictations took (per chunk, and stop to final text).
         val timingNav = LocalNavController.current
         Preference(

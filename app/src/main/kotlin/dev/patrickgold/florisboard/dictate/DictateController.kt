@@ -3217,7 +3217,9 @@ object DictateController {
      * through accessibility drifts out of step with what we believe is in it. The segments go to the
      * button's live caption instead, and the field gets one verified insert at the end.
      */
-    private fun segmentsHeldBack(): Boolean = outputTarget == OutputTarget.OVERLAY
+    private fun segmentsHeldBack(): Boolean = outputTarget == OutputTarget.OVERLAY ||
+        // Voice Keyboard: the user's choice for the keyboard too — one insert of the final, cleaned text.
+        (outputTarget == OutputTarget.IME && prefs.dictate.vkHoldTextUntilDone.get())
 
     /**
      * Cuts the current segment and keeps recording (the "Next segment" button, issue #170). The cut audio
