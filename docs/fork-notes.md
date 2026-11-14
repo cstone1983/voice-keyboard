@@ -41,7 +41,8 @@ Phase 1 (MVP keyboard) in progress:
 - [x] Billing and Dictate Cloud removed from the build and the UI
 - [x] API key encryption
 - [x] Classic themes and defaults
-- [x] CI workflow (needs the signing secrets in the repo settings)
+- [x] CI workflow; signing secrets set; first signed pre-release `build-1000002` (2026-11-14),
+      certificate `CN=Voice Keyboard`, SHA-256 `DB:F6:6A:11:...:D9:4F`
 - [ ] First signed build installed on the phone and checked
 - [ ] Settings check against the plan: server URL + key, models, language, hold-to-talk / toggle,
       silence auto-stop, auto-send, cleanup on/off, cleanup presets ("clean up", "formal", "casual",
