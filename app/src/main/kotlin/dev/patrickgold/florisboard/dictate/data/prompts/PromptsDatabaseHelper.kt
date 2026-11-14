@@ -73,6 +73,25 @@ class PromptsDatabaseHelper private constructor(
             }
             db.insert("PROMPTS", null, cv)
         }
+        insertVkCleanup(db)
+    }
+
+    /**
+     * Voice Keyboard: the "Clean up" prompt, applied automatically to every dictation (Wispr Flow-style:
+     * no fillers, fixed grammar and punctuation, the speaker's own words). Added once; the user can edit,
+     * turn off or delete it like any other prompt.
+     */
+    private fun insertVkCleanup(db: SQLiteDatabase) {
+        db.rawQuery("SELECT 1 FROM PROMPTS WHERE LIBRARY_ID = ?", arrayOf(VK_CLEANUP_ID)).use { if (it.moveToFirst()) return }
+        val cv = ContentValues().apply {
+            put("POS", -1)
+            put("NAME", "Clean up")
+            put("PROMPT", VK_CLEANUP_PROMPT)
+            put("REQUIRES_SELECTION", 1)
+            put("AUTO_APPLY", 1)
+            put("LIBRARY_ID", VK_CLEANUP_ID)
+        }
+        db.insert("PROMPTS", null, cv)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -98,6 +117,10 @@ class PromptsDatabaseHelper private constructor(
             // so that deleting the prompt deletes the mark with it — the SharedPreferences set it
             // replaces had no remove(), which left library entries marked "Added" forever.
             db.execSQL("ALTER TABLE PROMPTS ADD COLUMN LIBRARY_ID TEXT")
+        }
+        if (oldVersion < 7) {
+            // Voice Keyboard: existing installs get the automatic "Clean up" prompt too.
+            insertVkCleanup(db)
         }
     }
 
@@ -251,7 +274,15 @@ class PromptsDatabaseHelper private constructor(
         const val DATABASE_NAME = "prompts.db"
         // Bump this with EVERY new column, or onUpgrade never runs and the very next write dies with
         // "no such column" on an existing user's database (that is exactly what v5 shipped broken as).
-        const val DATABASE_VERSION = 6
+        const val DATABASE_VERSION = 7
+
+        private const val VK_CLEANUP_ID = "vk-cleanup"
+        private const val VK_CLEANUP_PROMPT =
+            "Clean up this dictated text. Remove filler words (um, uh, like, you know) and false starts; " +
+                "when the speaker corrects themselves, keep only the correction. Fix grammar, spelling, " +
+                "capitalization and punctuation. Turn spoken lists into lists, and \"new line\" or " +
+                "\"new paragraph\" into line breaks. Keep the speaker's own words, tone and language. Do not " +
+                "add, answer, summarize or explain anything. Return only the cleaned text, without quotes."
 
         @Volatile
         private var instance: PromptsDatabaseHelper? = null
