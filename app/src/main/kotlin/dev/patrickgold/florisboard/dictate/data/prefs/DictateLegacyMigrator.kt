@@ -338,9 +338,26 @@ object DictateLegacyMigrator {
      */
     suspend fun migratePromptsLayoutToRowIfNeeded() {
         val prefs by FlorisPreferenceStore
-        if (prefs.dictate.promptsLayoutRowMigrated.get()) return
-        prefs.dictate.promptsLayout.set(DictatePromptsLayout.ROW)
-        prefs.dictate.promptsLayoutRowMigrated.set(true)
+        if (!prefs.dictate.promptsLayoutRowMigrated.get()) {
+            prefs.dictate.promptsLayout.set(DictatePromptsLayout.ROW)
+            prefs.dictate.promptsLayoutRowMigrated.set(true)
+        }
+        applyVkLayoutDefaultsIfNeeded()
+    }
+
+    /**
+     * Voice Keyboard: once, the Gboard-like layout — one slim strip above the keys instead of three. The
+     * prompt chips move into their panel (opened from the toolbar; the automatic Clean up runs either
+     * way) and the number row goes (numbers stay on a long press of the top row). Both can be turned
+     * back on in the settings.
+     */
+    private suspend fun applyVkLayoutDefaultsIfNeeded() {
+        val prefs by FlorisPreferenceStore
+        if (prefs.dictate.vkLayoutDefaultsApplied.get()) return
+        prefs.dictate.promptsLayout.set(DictatePromptsLayout.PANEL)
+        prefs.keyboard.numberRow.set(false)
+        prefs.keyboard.hintedNumberRowEnabled.set(true)
+        prefs.dictate.vkLayoutDefaultsApplied.set(true)
     }
 
     /**

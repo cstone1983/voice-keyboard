@@ -87,7 +87,10 @@ fun QuickActionsRow(
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val width = constraints.maxWidth.toDp()
         val height = constraints.maxHeight.toDp()
-        val numActionsToShow = ((width / height).toInt() - (if (showOverflowAction) 1 else 0)).coerceAtLeast(0)
+        // Voice Keyboard: a short toolbar like Gboard's, even on a wide (unfolded) screen; the rest is in
+        // the overflow grid.
+        val numActionsToShow = ((width / height).toInt().coerceAtMost(VK_MAX_TOOLBAR_ACTIONS + 1) -
+            (if (showOverflowAction) 1 else 0)).coerceAtLeast(0)
         val visibleActions = dynamicActions
             .subList(0, numActionsToShow.coerceAtMost(dynamicActions.size))
 
@@ -122,3 +125,6 @@ fun QuickActionsRow(
         }
     }
 }
+
+/** Voice Keyboard: most toolbar icons shown at once. */
+private const val VK_MAX_TOOLBAR_ACTIONS = 6

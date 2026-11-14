@@ -77,6 +77,12 @@ data class ImeFormFactor(
                 sizeClass.isAtLeastBreakpoint(BP.WIDTH_DP_EXPANDED_LOWER_BOUND, BP.HEIGHT_DP_MEDIUM_LOWER_BOUND) -> {
                     Type.TABLET_LANDSCAPE
                 }
+                // Voice Keyboard: an unfolded foldable (about 830 x 750 dp) is wide enough to type split but not
+                // tall enough for the tablet rules above; count it as a tablet so it gets its own (split)
+                // config. A phone in landscape stays a phone: it is not 480 dp tall.
+                sizeClass.isAtLeastBreakpoint(BP.WIDTH_DP_MEDIUM_LOWER_BOUND, BP.HEIGHT_DP_MEDIUM_LOWER_BOUND) -> {
+                    if (boundsDp.width > boundsDp.height) Type.TABLET_LANDSCAPE else Type.TABLET_PORTRAIT
+                }
                 sizeClass.isHeightAtLeastBreakpoint(BP.HEIGHT_DP_MEDIUM_LOWER_BOUND) -> {
                     Type.PHONE_PORTRAIT
                 }

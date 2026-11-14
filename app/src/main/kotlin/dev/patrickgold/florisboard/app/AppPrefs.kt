@@ -761,6 +761,9 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         val vkSignedInUser = string(key = "vk__signed_in_user", default = "")
         // Who is using this keyboard (household key): the person id sent as X-VK-As. See VkIdentity.
         val vkActingUser = string(key = "vk__acting_user", default = "")
+        // One-time switch of existing installs to the Gboard-like defaults (prompt chips in a panel, no
+        // number row). See DictateLegacyMigrator.applyVkLayoutDefaultsIfNeeded.
+        val vkLayoutDefaultsApplied = boolean(key = "vk__layout_defaults_applied_v1", default = false)
         val vkSignedInDevice = string(key = "vk__signed_in_device", default = "")
         // Voice Keyboard: keep the chunks out of the text field until the final, cleaned-up text is ready.
         val vkHoldTextUntilDone = boolean(
