@@ -657,16 +657,6 @@ private val WhatsNewPages60: List<WhatsNewPage> = listOf(
         kind = PageKind.INTRO,
     ),
     WhatsNewPage(
-        icon = Icons.Filled.Cloud,
-        eyebrow = R.string.apptour60__cloud_eyebrow,
-        title = R.string.apptour60__cloud_title,
-        body = R.string.apptour60__cloud_body,
-        cta = R.string.apptour60__cta_try,
-        route = Routes.Settings.DictateCloud,
-        highlight = true,
-        art = TourArt.CREDIT_METER,
-    ),
-    WhatsNewPage(
         icon = Icons.Filled.ContentCut,
         eyebrow = R.string.apptour60__speedup_eyebrow,
         title = R.string.apptour60__speedup_title,

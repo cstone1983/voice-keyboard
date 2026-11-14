@@ -1369,7 +1369,7 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
     inner class Glide {
         val enabled = boolean(
             key = "glide__enabled",
-            default = false,
+            default = true, // Voice Keyboard: swipe typing on by default
         )
         val showTrail = boolean(
             key = "glide__show_trail",
@@ -1540,7 +1540,7 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         )
         val hintedSymbolsEnabled = boolean(
             key = "keyboard__hinted_symbols_enabled",
-            default = true,
+            default = false, // Voice Keyboard: clean keys; long-press still offers the symbols
         )
         val hintedSymbolsMode = enum(
             key = "keyboard__hinted_symbols_mode",
@@ -1868,12 +1868,12 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         )
         val dayThemeId = custom(
             key = "theme__day_theme_id",
-            default = extCoreTheme("floris_day"),
+            default = extCoreTheme("classic_you_day"), // Voice Keyboard default theme
             serializer = ExtensionComponentName.Serializer,
         )
         val nightThemeId = custom(
             key = "theme__night_theme_id",
-            default = extCoreTheme("floris_night"),
+            default = extCoreTheme("classic_you_night"), // Voice Keyboard default theme
             serializer = ExtensionComponentName.Serializer,
         )
         val accentColor = custom(
@@ -1887,12 +1887,12 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         // the keyboard someone is looking at.
         val themeIdBeforeHighContrastDay = custom(
             key = "theme__day_theme_id_before_high_contrast",
-            default = extCoreTheme("floris_day"),
+            default = extCoreTheme("classic_you_day"),
             serializer = ExtensionComponentName.Serializer,
         )
         val themeIdBeforeHighContrastNight = custom(
             key = "theme__night_theme_id_before_high_contrast",
-            default = extCoreTheme("floris_night"),
+            default = extCoreTheme("classic_you_night"),
             serializer = ExtensionComponentName.Serializer,
         )
         val sunriseTime = localTime(

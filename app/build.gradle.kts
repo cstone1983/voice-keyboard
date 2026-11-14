@@ -68,7 +68,7 @@ configure<ApplicationExtension> {
     }
 
     defaultConfig {
-        applicationId = "net.devemperor.dictate"
+        applicationId = "io.github.cstone1983.voicekeyboard" // Voice Keyboard (fork of net.devemperor.dictate)
         minSdk = projectMinSdk.toInt()
         targetSdk = projectTargetSdk.toInt()
         versionCode = projectVersionCode.toInt()
@@ -84,7 +84,13 @@ configure<ApplicationExtension> {
         // account. Real users pay nothing for it — the bundle is split per architecture, so a phone
         // only ever downloads the libraries it can run. See tools/fetch-sherpa-onnx.sh.
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            // Voice Keyboard: one phone (arm64), sideloaded as a single APK, so only that ABI is packaged
+            // (Bergamot is built for arm64 only as well). Pass -PallAbis=true for upstream's set.
+            if (providers.gradleProperty("allAbis").orNull == "true") {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            } else {
+                abiFilters += listOf("arm64-v8a")
+            }
         }
 
         buildConfigField("String", "BUILD_COMMIT_HASH", "\"${getGitCommitHash().get()}\"")
@@ -225,9 +231,6 @@ dependencies {
     // testImplementation(composeBom)
     // androidTestImplementation(composeBom)
 
-    // Play Billing for the optional Dictate Cloud credit packs (#255 follow-up). Version 8 is
-    // not a choice: from 31.08.2026 Play refuses uploads built against anything older.
-    implementation(libs.android.billing.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.autofill)

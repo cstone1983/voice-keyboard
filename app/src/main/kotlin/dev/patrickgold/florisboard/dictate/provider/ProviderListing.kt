@@ -28,7 +28,7 @@ object ProviderListing {
      * else. Dictate Cloud is bought inside the app and the on-device engine needs only a download, so
      * hiding them until they were set up would hide them from exactly the people they are for.
      */
-    val pinnedIds: Set<String> = setOf(ProviderRegistry.LOCAL.id, ProviderRegistry.CLOUD.id)
+    val pinnedIds: Set<String> = setOf(ProviderRegistry.LOCAL.id) // Voice Keyboard: no Dictate Cloud
 
     /**
      * Whether [preset] can be used right now.

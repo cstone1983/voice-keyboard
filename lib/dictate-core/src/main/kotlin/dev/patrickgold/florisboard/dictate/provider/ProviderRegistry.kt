@@ -927,9 +927,13 @@ object ProviderRegistry {
         curatedTranscriptionModels = listOf("whisper-base", "whisper-tiny"),
     )
 
-    /** All built-in presets in display order. The custom option is added by the UI on top of these. */
+    /**
+     * All built-in presets in display order. The custom option is added by the UI on top of these.
+     * Voice Keyboard: [CLOUD] (the paid Dictate Cloud service) is left out; this build is meant for the
+     * user's own server.
+     */
     val presets: List<ProviderPreset> = listOf(
-        CLOUD, OPENAI, GROQ, OPENROUTER, GEMINI, ANTHROPIC, TOGETHER, DEEPINFRA, MISTRAL, SONIOX,
+        OPENAI, GROQ, OPENROUTER, GEMINI, ANTHROPIC, TOGETHER, DEEPINFRA, MISTRAL, SONIOX,
         ELEVENLABS, DEEPGRAM, ASSEMBLYAI, AZURE, XAI, DEEPSEEK, SILICONFLOW, SCALEWAY, OVHCLOUD,
         OLLAMA, LOCAL,
     )

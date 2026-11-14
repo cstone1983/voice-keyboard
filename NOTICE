@@ -1,3 +1,13 @@
+Voice Keyboard
+Copyright 2026 Voice Keyboard contributors
+
+Voice Keyboard is a modified version of Dictate Keyboard by DevEmperor
+(https://github.com/DevEmperor/Dictate), which is itself a fork of FlorisBoard.
+Both are licensed under the Apache License, Version 2.0. Changes made in this
+fork are listed in docs/fork-notes.md and in the git history.
+
+================================================================================
+
 Dictate Keyboard
 Copyright 2024-2026 DevEmperor
 

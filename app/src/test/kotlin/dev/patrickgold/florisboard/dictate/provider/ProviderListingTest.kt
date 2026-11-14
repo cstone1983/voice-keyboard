@@ -33,8 +33,9 @@ class ProviderListingTest {
             .map { it.id }
 
     @Test
-    fun `a fresh install lists the two pinned providers and nothing else`() {
-        assertEquals(listOf(ProviderRegistry.CLOUD.id, ProviderRegistry.LOCAL.id), listed(accountsOf()))
+    fun `a fresh install lists the pinned on-device provider and nothing else`() {
+        // Voice Keyboard: Dictate Cloud is not offered, so the on-device engine is the only pinned one.
+        assertEquals(listOf(ProviderRegistry.LOCAL.id), listed(accountsOf()))
     }
 
     @Test
@@ -85,9 +86,9 @@ class ProviderListingTest {
 
     // Pinned is about the providers screen: a picker still offers Dictate Cloud only once there is credit.
     @Test
-    fun `Dictate Cloud is always listed but only pickable with a wallet`() {
+    fun `Dictate Cloud is not pinned and only pickable with a wallet`() {
         val cloud = ProviderRegistry.CLOUD
-        assertTrue(ProviderListing.isListed(cloud, accountsOf(), emptySet(), nothingInstalled))
+        assertFalse(ProviderListing.isListed(cloud, accountsOf(), emptySet(), nothingInstalled))
         assertFalse(ProviderListing.isPickable(cloud, accountsOf(), selectedId = "", nothingInstalled))
         val funded = accountsOf(ProviderAccount(providerId = cloud.id, apiKey = "wallet-token"))
         assertTrue(ProviderListing.isPickable(cloud, funded, selectedId = "", nothingInstalled))

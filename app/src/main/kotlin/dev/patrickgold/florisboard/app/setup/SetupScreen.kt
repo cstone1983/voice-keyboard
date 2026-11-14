@@ -832,15 +832,7 @@ private fun FlorisStepLayoutScope.ProviderChoice(
     StepText(stringRes(R.string.setup__provider__choose_intro))
     Spacer(modifier = Modifier.height(16.dp))
 
-    ChoiceCard(
-        title = stringRes(R.string.setup__provider__choice_cloud_title),
-        body = stringRes(R.string.setup__provider__choice_cloud_body),
-        buttonLabel = stringRes(R.string.setup__provider__choice_cloud_btn),
-        onClick = onChooseCloud,
-        // One mark, because this is one service.
-        marks = listOf(ProviderRegistry.CLOUD.id),
-    )
-    Spacer(modifier = Modifier.height(12.dp))
+    // Voice Keyboard: the Dictate Cloud card is left out (no paid cloud in this build).
     ChoiceCard(
         title = stringRes(R.string.setup__provider__choice_own_title),
         body = stringRes(R.string.setup__provider__choice_own_body),

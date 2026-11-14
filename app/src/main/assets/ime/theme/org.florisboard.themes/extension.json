@@ -13,6 +13,30 @@
   },
   "themes": [
     {
+      "id": "classic_you_day",
+      "label": "Classic Material You (Day)",
+      "authors": [ "Voice Keyboard" ],
+      "isNight": false
+    },
+    {
+      "id": "classic_you_night",
+      "label": "Classic Material You (Night)",
+      "authors": [ "Voice Keyboard" ],
+      "isNight": true
+    },
+    {
+      "id": "classic_day",
+      "label": "Classic Light",
+      "authors": [ "Voice Keyboard" ],
+      "isNight": false
+    },
+    {
+      "id": "classic_night",
+      "label": "Classic Dark",
+      "authors": [ "Voice Keyboard" ],
+      "isNight": true
+    },
+    {
       "id": "dictate_glass",
       "label": "Dictate Glass",
       "authors": [ "DevEmperor" ],

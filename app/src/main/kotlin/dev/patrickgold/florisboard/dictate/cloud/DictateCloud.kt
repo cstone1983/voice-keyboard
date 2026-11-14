@@ -12,8 +12,6 @@ package dev.patrickgold.florisboard.dictate.cloud
 
 import android.app.Activity
 import android.content.Context
-import com.android.billingclient.api.BillingClient.BillingResponseCode
-import com.android.billingclient.api.Purchase
 import dev.patrickgold.florisboard.app.FlorisPreferenceStore
 import dev.patrickgold.florisboard.dictate.provider.ProviderAccount
 import dev.patrickgold.florisboard.dictate.provider.ProviderRegistry

@@ -125,6 +125,12 @@ data class ProviderAccount(
     val balanceRewords: Int = -1,
     val balanceCheckedAt: Long = 0L,
 ) {
+    /** Voice Keyboard: never print secrets (the data-class default would include the API key). */
+    override fun toString(): String =
+        "ProviderAccount(providerId=$providerId, displayName=$displayName, customBaseUrl=$customBaseUrl, " +
+            "transcriptionModel=$transcriptionModel, chatModel=$chatModel, " +
+            "apiKey=${if (apiKey.isEmpty()) "" else "<redacted>"})"
+
     /** True once the user has supplied a usable key (or this is a keyless endpoint like Ollama). */
     val hasKey: Boolean
         get() = apiKey.isNotBlank()
@@ -369,8 +375,9 @@ data class ProviderAccounts(
     object Serializer : PreferenceSerializer<ProviderAccounts> {
         private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
+        // Voice Keyboard: API keys are encrypted at rest (see SecretBox); only this serializer sees them sealed.
         override fun serialize(value: ProviderAccounts): String =
-            PreferenceJson.encode(json.encodeToString(value))
+            PreferenceJson.encode(json.encodeToString(value.mapSecrets(SecretBox::seal)))
 
         override fun deserialize(value: String): ProviderAccounts =
             deserializeOrNull(value) ?: Empty
@@ -385,7 +392,7 @@ data class ProviderAccounts(
          * two can never drift apart.
          */
         fun deserializeOrNull(value: String): ProviderAccounts? = try {
-            json.decodeFromString<ProviderAccounts>(PreferenceJson.decode(value))
+            json.decodeFromString<ProviderAccounts>(PreferenceJson.decode(value)).mapSecrets(SecretBox::open)
         } catch (e: Exception) {
             flogError { "Failed to deserialize ProviderAccounts: $e" }
             null
@@ -394,5 +401,15 @@ data class ProviderAccounts(
 
     companion object {
         val Empty = ProviderAccounts(emptyMap())
+
+        private fun ProviderAccounts.mapSecrets(transform: (String) -> String): ProviderAccounts =
+            copy(
+                accounts = accounts.mapValues { (_, account) ->
+                    account.copy(
+                        apiKey = transform(account.apiKey),
+                        walletRecoveryCode = transform(account.walletRecoveryCode),
+                    )
+                },
+            )
     }
 }
