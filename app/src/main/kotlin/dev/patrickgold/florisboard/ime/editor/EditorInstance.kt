@@ -1106,6 +1106,8 @@ class EditorInstance(context: Context) : AbstractEditorInstance(context) {
         autoSpace.setInactive()
         phantomSpace.setInactive()
         val ic = currentInputConnection() ?: return false
+        // Voice Keyboard: Send/Go/Done ends a dictated span; take its final version before the app acts.
+        dev.patrickgold.florisboard.vk.learning.VkLearning.onEditorAction(action.toInt())
         return ic.performEditorAction(action.toInt())
     }
 

@@ -103,6 +103,11 @@ class FlorisImeService : LifecycleInputMethodService() {
             return FlorisImeServiceReference.get()?.currentInputConnection
         }
 
+        /** Voice Keyboard: the editor the keyboard is attached to, for the learning privacy checks. */
+        fun currentEditorInfo(): android.view.inputmethod.EditorInfo? {
+            return FlorisImeServiceReference.get()?.currentInputEditorInfo
+        }
+
         fun inputFeedbackController(): InputFeedbackController? {
             return FlorisImeServiceReference.get()?.inputFeedbackController
         }
@@ -392,6 +397,8 @@ class FlorisImeService : LifecycleInputMethodService() {
         flogInfo { "restarting=$restarting info=${info?.debugSummarize()}" }
         super.onStartInputView(info, restarting)
         if (info == null) return
+        // Voice Keyboard: refresh the learned profile for this app (at most hourly), send queued uploads.
+        dev.patrickgold.florisboard.vk.learning.VkLearning.onKeyboardStart(info)
         val editorInfo = FlorisEditorInfo.wrap(info)
         activeState.batchEdit {
             // A new editor field invalidates any in-progress emoji search (issue #110); drop it so we
@@ -505,6 +512,8 @@ class FlorisImeService : LifecycleInputMethodService() {
     ) {
         flogInfo { "old={start=$oldSelStart,end=$oldSelEnd} new={start=$newSelStart,end=$newSelEnd} composing={start=$candidatesStart,end=$candidatesEnd}" }
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        // Voice Keyboard: follow a just-dictated span while the user edits it (no-op otherwise).
+        dev.patrickgold.florisboard.vk.learning.VkLearning.onFieldChanged()
         // A cursor the keyboard did not move means the user is working in the app's field again: the
         // translate bar gives the keys back (#424), a search closes (#394).
         keyboardManager.onAppSelectionChanged(oldSelStart, oldSelEnd, newSelStart, newSelEnd)
@@ -526,6 +535,7 @@ class FlorisImeService : LifecycleInputMethodService() {
 
     override fun onFinishInput() {
         flogInfo { "(no args)" }
+        dev.patrickgold.florisboard.vk.learning.VkLearning.onFieldFinished()
         super.onFinishInput()
         editorInstance.handleFinishInput()
         NlpInlineAutofill.clearInlineSuggestions()
@@ -550,6 +560,7 @@ class FlorisImeService : LifecycleInputMethodService() {
     }
 
     override fun onWindowHidden() {
+        dev.patrickgold.florisboard.vk.learning.VkLearning.onFieldFinished()
         super.onWindowHidden()
         // Collapsing the keyboard during a recording finalizes and keeps the audio so far (instead of
         // discarding it): the next keyboard open then offers to send the interrupted recording. Outside

@@ -66,7 +66,11 @@ fun DictateOwnServerScreen() = FlorisScreen {
                 onSave = { choice ->
                     scope.launch {
                         prefs.saveOwnServer(choice)
-                        Toast.makeText(context, "Server saved and selected", Toast.LENGTH_SHORT).show()
+                        val user = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            dev.patrickgold.florisboard.vk.learning.VkLearning.refreshSignedIn()
+                        }
+                        val who = user?.let { " · Signed in as ${dev.patrickgold.florisboard.vk.learning.VkLearning.displayName(it)}" }.orEmpty()
+                        Toast.makeText(context, "Server saved and selected$who", Toast.LENGTH_LONG).show()
                         navController.popBackStack()
                     }
                 },

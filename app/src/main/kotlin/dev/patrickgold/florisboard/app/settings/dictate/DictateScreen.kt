@@ -371,6 +371,13 @@ fun DictateRecordingScreen() = FlorisScreen {
         )
         // Voice Keyboard: how long the last dictations took (per chunk, and stop to final text).
         val timingNav = LocalNavController.current
+        // Voice Keyboard: learning from corrections and writing style (on the user's server).
+        Preference(
+            icon = Icons.Default.Segment,
+            title = "Learning",
+            summary = "Learn from my corrections and my writing style; learned words; forget everything",
+            onClick = { timingNav.navigate(Routes.Settings.VkLearning) },
+        )
         Preference(
             icon = Icons.Default.Timer,
             title = "Dictation timing",

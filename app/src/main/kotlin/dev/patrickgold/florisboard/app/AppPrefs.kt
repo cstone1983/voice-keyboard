@@ -749,6 +749,17 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         )
         // Voice Keyboard chunking (AUTO mode without Smart Turn): pause that ends a chunk, the least audio a
         // chunk must have before a pause may end it, and the length at which a chunk is cut anyway.
+        // Voice Keyboard learning (Phase 2). Everything stays on the user's own server.
+        val vkLearnCorrections = boolean(key = "vk__learn_corrections", default = false)
+        val vkLearnStyle = boolean(key = "vk__learn_style", default = false)
+        // Package names, one per line, never learned from.
+        val vkLearningExcludedApps = string(key = "vk__learning_excluded_apps", default = "")
+        // Offline queue of pending learning uploads (JSON), and the cached profiles per app (JSON).
+        val vkLearningQueue = string(key = "vk__learning_queue", default = "[]")
+        val vkProfileCache = string(key = "vk__profile_cache", default = "{}")
+        // "Signed in as": the display name the server returned for this key (GET vk/me).
+        val vkSignedInUser = string(key = "vk__signed_in_user", default = "")
+        val vkSignedInDevice = string(key = "vk__signed_in_device", default = "")
         // Voice Keyboard: keep the chunks out of the text field until the final, cleaned-up text is ready.
         val vkHoldTextUntilDone = boolean(
             key = "vk__hold_text_until_done",

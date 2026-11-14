@@ -2494,6 +2494,9 @@ object DictateController {
         latencyTrace: BatchLatencyTrace? = null,
         handedOver: String = "",
     ) {
+        // Voice Keyboard: the learned fix rules for repeated mishears, before anything else sees the text.
+        @Suppress("NAME_SHADOWING")
+        val rawText = dev.patrickgold.florisboard.vk.learning.VkLearning.applyReplacements(rawText)
         swallowedRewording = null // this dictation's own slate (issue #284)
         // The spoken command word (#139): a transcript that opens with the user's trigger is an
         // instruction, not something to write down — the same thing the live-prompt chip does, said
@@ -2691,6 +2694,15 @@ object DictateController {
         }
         // Re-insert safety net (issue #111) + lifetime stats (issue #142) + history log (issue #140).
         rememberLastDictation(appContext, dictated)
+        // Voice Keyboard: follow what was just written, to learn from the user's corrections (opt-in).
+        if (outputTarget == OutputTarget.IME && inField.isNotEmpty()) {
+            val account = transcriptionAccount()
+            runCatching {
+                dev.patrickgold.florisboard.vk.learning.VkLearning.onDictationInserted(
+                    inField, transcriptionModelFor(appContext, account, presetFor(account)),
+                )
+            }
+        }
         lastDictationLead = lead
         lastDictationTrail = trail
         // For the next dictation to put the stop back (#468), and only where it can: the field ends in this
@@ -4927,7 +4939,14 @@ object DictateController {
             promptsDb(context).getAll().filter { it.autoApply }
         }
         for (p in autoApply) {
-            val instruction = p.prompt.orEmpty()
+            // Voice Keyboard: the automatic cleanup also gets the learned style and "change nothing else".
+            val instruction = p.prompt.orEmpty().let { base ->
+                if (p.libraryId == "vk-cleanup" && base.isNotBlank()) {
+                    base + "\n" + dev.patrickgold.florisboard.vk.learning.VkLearning.cleanupAddendum()
+                } else {
+                    base
+                }
+            }
             if (instruction.isBlank()) continue
             val snippet = p.snippetBody()
             if (snippet != null) {

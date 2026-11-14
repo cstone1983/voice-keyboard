@@ -53,6 +53,28 @@ Possible server change that would help further (not done, server is managed sepa
 endpoint (WebSocket, OpenAI realtime-style) would remove per-request overhead and let the last chunk start
 before stop.
 
+## Learning (Phase 2)
+
+Server API under `<base_url>vk/` (same Bearer key; the server maps key -> person). Code in
+`app/.../vk/learning/`.
+
+- Capture (`VkLearning`): after a dictation is inserted in the keyboard, the span is followed by the
+  ~30 characters before/after it on each selection change. Ends on Send/Go/Done, field cleared, field
+  left, keyboard hidden, or the next dictation. Never in password fields, fields with
+  `IME_FLAG_NO_PERSONALIZED_LEARNING`, or excluded apps. Only the span (and 3 words of context per edit)
+  leaves the phone.
+- Diff (`CorrectionDiff`): word level; skip when nothing changed or >40 % changed; text typed on at
+  either end is not a correction. `POST vk/corrections`.
+- "Learn my writing style": the final span on Send/clear -> `POST vk/messages` (category from the app).
+- Uploads are queued (pref JSON), retried on the next keyboard start, dropped after 7 days.
+- Profile: `GET vk/profile?app=` at most hourly per app; `whisper_prompt` goes into Whisper's prompt
+  (with the previous-chunk context), `replacements` are applied whole-word before cleanup,
+  `cleanup_style` + up to 3 examples + "fix only fillers/grammar/punctuation, keep wording and tone, add
+  nothing" are added to the automatic Clean up prompt.
+- Settings → Dictation → Learning: both switches (default off), excluded apps, learned words with
+  delete (`DELETE vk/learned/<id>`), Export (`GET vk/export`), Forget everything (`DELETE vk/data`).
+  "Signed in as" from `GET vk/me` after saving a server.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

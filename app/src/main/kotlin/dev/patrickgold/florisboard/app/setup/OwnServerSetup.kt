@@ -118,6 +118,9 @@ internal data class OwnServerSetupCode(
     val apiKey: String,
     val transcriptionModel: String? = null,
     val chatModel: String? = null,
+    /** Display only: who the server says this key belongs to, and the device name. */
+    val user: String? = null,
+    val device: String? = null,
 )
 
 internal fun parseOwnServerSetupCode(text: String): OwnServerSetupCode? {
@@ -138,6 +141,8 @@ internal fun parseOwnServerSetupCode(text: String): OwnServerSetupCode? {
         apiKey = str("api_key", "key").orEmpty(),
         transcriptionModel = str("stt_model", "transcription_model"),
         chatModel = str("chat_model", "cleanup_model"),
+        user = str("user"),
+        device = str("device"),
     )
 }
 
@@ -304,6 +309,9 @@ internal fun OwnServerSetup(
         code.chatModel?.let { chatModel = it }
         models = emptyList()
         testAndLoad()
+        code.user?.let { u ->
+            status = "Setup code for ${u.replaceFirstChar { it.uppercase() }}" + (code.device?.let { " ($it)" } ?: "") + ". " + status.orEmpty()
+        }
     }
 
     fun handleImage(uri: Uri) {

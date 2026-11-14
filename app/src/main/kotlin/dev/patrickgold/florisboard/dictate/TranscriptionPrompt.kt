@@ -46,6 +46,15 @@ fun transcriptionStylePrompt(
     prefs: FlorisPreferenceModel,
     language: String = prefs.dictate.activeInputLanguage.get(),
 ): String? = DictatePromptDefaults.appendCustomWords(transcriptionStyleBasePrompt(prefs, language), prefs.dictate.customWords.get())
+    .let { base ->
+        // Voice Keyboard: the learned vocabulary prompt from the user's server, ahead of the style prompt.
+        val learned = dev.patrickgold.florisboard.vk.learning.VkLearning.profile()?.whisperPrompt?.trim().orEmpty()
+        when {
+            learned.isEmpty() -> base
+            base.isNullOrBlank() -> learned
+            else -> "$learned $base"
+        }
+    }
 
 /**
  * The custom words one by one (issue #466), for

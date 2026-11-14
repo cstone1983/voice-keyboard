@@ -379,7 +379,12 @@ private fun PreferenceUiScope<FlorisPreferenceModel>.steps(
      * transcription provider, and the rewording (cleanup) provider when a cleanup model was picked.
      */
     fun saveOwnServer(choice: OwnServerChoice) {
-        scope.launch { this@steps.prefs.saveOwnServer(choice) }
+        scope.launch {
+            this@steps.prefs.saveOwnServer(choice)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                dev.patrickgold.florisboard.vk.learning.VkLearning.refreshSignedIn(this@steps.prefs)
+            }
+        }
     }
 
     /** Points the on-device engine at [modelId] and makes it the active transcription provider. */
