@@ -142,23 +142,49 @@ fun VkLearningScreen() = FlorisScreen {
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
-                if (people.isNotEmpty()) TextButton(onClick = { showPicker = !showPicker }) { Text("Switch user") }
             }
-            if (showPicker && people.isNotEmpty()) {
+            // Who's using this keyboard: always visible. A list from the server when it has one, otherwise
+            // the user name typed in (the household key may act as any person the server knows).
+            fun choose(person: dev.patrickgold.florisboard.vk.learning.VkIdentity.Person) {
+                scope.launch {
+                    dev.patrickgold.florisboard.vk.learning.VkIdentity.select(prefs, person)
+                    VkLearning.clearProfiles()
+                    val name = withContext(Dispatchers.IO) { VkLearning.refreshSignedIn() }
+                    Toast.makeText(
+                        context,
+                        if (name != null) "Signed in as $name" else "The server did not accept that user name",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    loadLearned()
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            if (people.isNotEmpty()) {
                 dev.patrickgold.florisboard.vk.learning.VkUserPicker(
                     people = people,
                     selected = actingUser.takeIf { it.isNotBlank() },
-                    onPick = { person ->
-                        scope.launch {
-                            dev.patrickgold.florisboard.vk.learning.VkIdentity.select(prefs, person)
-                            VkLearning.clearProfiles()
-                            withContext(Dispatchers.IO) { VkLearning.refreshSignedIn() }
-                            showPicker = false
-                            loadLearned()
-                        }
-                    },
+                    onPick = { choose(it) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+            } else {
+                var typed by remember(actingUser) { mutableStateOf(actingUser) }
+                Text("Who's using this keyboard?", style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = typed,
+                        onValueChange = { typed = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Your user name on the server") },
+                        singleLine = true,
+                    )
+                    TextButton(
+                        enabled = typed.isNotBlank(),
+                        onClick = {
+                            val id = typed.trim().lowercase()
+                            choose(dev.patrickgold.florisboard.vk.learning.VkIdentity.Person(id, VkLearning.displayName(id)))
+                        },
+                    ) { Text("Use") }
+                }
             }
             Text(
                 "Everything is stored only on your own server. Password fields and excluded apps are never read.",

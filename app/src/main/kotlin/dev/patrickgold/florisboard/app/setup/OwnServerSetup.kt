@@ -459,13 +459,23 @@ internal fun OwnServerSetup(
                 options = models.sortedBy { it.looksLikeSpeech() }.map { it.id },
                 onChange = { chatModel = it },
             )
+            Spacer(Modifier.height(12.dp))
             if (people.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
                 dev.patrickgold.florisboard.vk.learning.VkUserPicker(
                     people = people,
                     selected = pickedUser,
                     onPick = { pickedUser = it.user },
                     modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                // No list from the server (yet): the user name can be typed. Optional; used for learning.
+                OutlinedTextField(
+                    value = pickedUser.orEmpty(),
+                    onValueChange = { pickedUser = it.trim().lowercase().ifEmpty { null } },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Who's using this keyboard? (your user name on the server)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
                 )
             }
             Spacer(Modifier.height(16.dp))
@@ -483,7 +493,10 @@ internal fun OwnServerSetup(
                             chatModel = chatModel.trim(),
                             models = models.map { it.id },
                             transcriptionModels = models.filter { it.isTranscriptionModel }.map { it.id },
-                            person = people.firstOrNull { it.user == pickedUser },
+                            person = people.firstOrNull { it.user == pickedUser }
+                                ?: pickedUser?.let { u ->
+                                    dev.patrickgold.florisboard.vk.learning.VkIdentity.Person(u, u.replaceFirstChar { it.uppercase() })
+                                },
                         ),
                     )
                 },
