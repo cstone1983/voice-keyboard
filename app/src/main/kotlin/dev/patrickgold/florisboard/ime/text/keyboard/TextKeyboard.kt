@@ -21,7 +21,12 @@ import dev.patrickgold.florisboard.ime.keyboard.Keyboard
 import dev.patrickgold.florisboard.ime.keyboard.KeyboardMode
 import dev.patrickgold.florisboard.ime.keyboard.isSplittable
 import dev.patrickgold.florisboard.ime.popup.PopupMapping
+import dev.patrickgold.florisboard.app.FlorisPreferenceStore
+import dev.patrickgold.florisboard.ime.text.key.KeyCode
 import kotlin.math.abs
+
+/** Voice Keyboard: prefs for the split typing correction. */
+private val vkPrefs by FlorisPreferenceStore
 
 class TextKeyboard(
     val arrangement: Array<Array<TextKey>>,
@@ -36,6 +41,22 @@ class TextKeyboard(
         get() = arrangement.sumOf { it.size }
 
     override fun getKeyForPos(pointerX: Float, pointerY: Float): TextKey? {
+        val raw = rawKeyForPos(pointerX, pointerY)
+        // Voice Keyboard: on a split keyboard, count a letter touch where the thumb was aiming.
+        val g = vkSplitGeometry ?: return raw
+        if (raw == null || !raw.isVkLetterKey()) return raw
+        val prefs = vkPrefs
+        if (!prefs.keyboard.vkSplitTouchCorrection.get()) return raw
+        val (nx, ny) = SplitTouchCorrection.adjust(
+            pointerX, pointerY, g[0], g[1], g[2], g[3], g[4],
+            spread = prefs.keyboard.vkSplitTouchSpreadPercent.get() / 100f,
+            liftRight = prefs.keyboard.vkSplitTouchLiftRightPercent.get() / 100f,
+        )
+        val adjusted = rawKeyForPos(nx, ny)
+        return if (adjusted != null && adjusted.isVkLetterKey()) adjusted else raw
+    }
+
+    private fun rawKeyForPos(pointerX: Float, pointerY: Float): TextKey? {
         for (key in keys()) {
             if (key.touchBounds.contains(pointerX, pointerY)) {
                 return key
@@ -43,6 +64,17 @@ class TextKeyboard(
         }
         return null
     }
+
+    private fun TextKey.isVkLetterKey(): Boolean {
+        val code = computedData.code
+        return code > 32 && Character.isLetterOrDigit(code)
+    }
+
+    /** Voice Keyboard: width, half width, gap, letter rows height, row pitch of the last split layout. */
+    private var vkSplitGeometry: FloatArray? = null
+
+    /** Voice Keyboard: whether the last layout was split. */
+    val isVkSplit: Boolean get() = vkSplitGeometry != null
 
     /**
      * The gap this keyboard actually splits by, which is the requested [splitGap] unless there is
@@ -73,6 +105,12 @@ class TextKeyboard(
         val rowMarginH = abs(desiredTouchBounds.width - desiredVisibleBounds.width)
         val rowMarginV = (keyboardHeight - desiredTouchBounds.height * rowCount.toFloat()) / (rowCount - 1).coerceAtLeast(1).toFloat()
         val gap = effectiveSplitGap(keyboardWidth, splitGap)
+        vkSplitGeometry = if (gap > 0.0f && rowCount > 1) {
+            val pitch = desiredTouchBounds.height + rowMarginV
+            floatArrayOf(keyboardWidth, (keyboardWidth - gap) / 2.0f, gap, pitch * (rowCount - 1), pitch)
+        } else {
+            null
+        }
 
         for ((r, row) in rows().withIndex()) {
             val posY = (desiredTouchBounds.height + rowMarginV) * r
@@ -108,6 +146,7 @@ class TextKeyboard(
                     rowMarginH = rowMarginH,
                     extendTouchBoundariesDownwards = extendDownwards,
                 )
+                vkWidenRightSpaceBar(row.asList().subList(seam, row.size))
             }
         }
     }
@@ -251,6 +290,24 @@ class TextKeyboard(
             }
         }
         return 0
+    }
+
+    /**
+     * Voice Keyboard: on the split bottom row, give the right space bar a third of the period key (the
+     * typing test turned space into "." five times); the period is also on a long press of the comma.
+     */
+    private fun vkWidenRightSpaceBar(segment: List<TextKey>) {
+        for (i in 0 until segment.size - 1) {
+            val space = segment[i]
+            val period = segment[i + 1]
+            if (space.computedData.code != KeyCode.SPACE || period.computedData.code != '.'.code) continue
+            val delta = period.touchBounds.width / 3.0f
+            space.touchBounds.right += delta
+            space.visibleBounds.right += delta
+            period.touchBounds.left += delta
+            period.visibleBounds.left += delta
+            return
+        }
     }
 
     override fun keys(): Iterator<TextKey> {

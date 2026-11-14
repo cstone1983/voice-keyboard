@@ -129,8 +129,11 @@ fun TextKeyboardLayout(
     // Suppressed while the modern keyboard is reached via the legacy swipe gesture (issue #125), so a
     // horizontal glide doesn't swallow the swipe-back that returns to the dictation UI.
     val glideSuppressed by dev.patrickgold.florisboard.dictate.ui.LegacyLayoutState.suppressGlide.collectAsState()
+    // Voice Keyboard: swipe typing is off on a split keyboard unless chosen (quick taps read as swipes).
+    val glideWhenSplit by prefs.keyboard.vkGlideWhenSplit.collectAsState()
     val glideEnabled = glideEnabledInternal && !glideSuppressed && evaluator.editorInfo.isRichInputEditor &&
-        evaluator.state.keyVariation != KeyVariation.PASSWORD && !isTouchExplorationEnabled(context)
+        evaluator.state.keyVariation != KeyVariation.PASSWORD && !isTouchExplorationEnabled(context) &&
+        (glideWhenSplit || !keyboard.isVkSplit)
     val glideShowTrail by prefs.glide.showTrail.collectAsState()
     val glideTrailStyle = rememberSnyggThemeQuery(FlorisImeUi.GlideTrail.elementName)
     val glideTrailColor = glideTrailStyle.foreground(default = Color.Green)
@@ -385,7 +388,9 @@ private fun TextKeyButton(
                 val spaceBarMode by prefs.keyboard.spaceBarMode.collectAsState()
                 when (spaceBarMode) {
                     SpaceBarMode.NOTHING -> return@let
-                    SpaceBarMode.CURRENT_LANGUAGE -> {}
+                    // Voice Keyboard: the short name ("English", not "English (United States)"), which also
+                    // fits the two half space bars of a split keyboard.
+                    SpaceBarMode.CURRENT_LANGUAGE -> customLabel = label.substringBefore(" (")
                     SpaceBarMode.SPACE_BAR_KEY -> customLabel = "␣"
                     // Collected here rather than in the evaluator, so switching the provider — from the
                     // keyboard's own picker as much as from the settings — relabels the key at once.
@@ -506,6 +511,7 @@ private class TextKeyboardLayoutController(
     var size = Size.Zero
 
     val isGlideEnabled: Boolean get() = prefs.glide.enabled.get() &&
+        (prefs.keyboard.vkGlideWhenSplit.get() || !(::keyboard.isInitialized && keyboard.isVkSplit)) &&
         !dev.patrickgold.florisboard.dictate.ui.LegacyLayoutState.suppressGlide.value &&
         editorInstance.activeInfo.isRichInputEditor &&
         keyboardManager.activeState.keyVariation != KeyVariation.PASSWORD && !isTouchExplorationEnabled(appContext)

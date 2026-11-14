@@ -248,8 +248,9 @@ sealed class ImeWindowConstraints(rootInsets: ImeInsets.Root) {
                 val targetHalfWidth = when (formFactor.typeGuess) {
                     ImeFormFactor.Type.DESKTOP,
                     ImeFormFactor.Type.LARGE_TABLET -> 380.dp
-                    ImeFormFactor.Type.TABLET_LANDSCAPE -> 360.dp
-                    ImeFormFactor.Type.TABLET_PORTRAIT -> 340.dp
+                    // Voice Keyboard: narrower halves on a foldable, within thumb reach (typing test).
+                    ImeFormFactor.Type.TABLET_LANDSCAPE -> 330.dp
+                    ImeFormFactor.Type.TABLET_PORTRAIT -> 310.dp
                     ImeFormFactor.Type.PHONE_LANDSCAPE -> 320.dp
                     ImeFormFactor.Type.PHONE_PORTRAIT -> 300.dp
                 }

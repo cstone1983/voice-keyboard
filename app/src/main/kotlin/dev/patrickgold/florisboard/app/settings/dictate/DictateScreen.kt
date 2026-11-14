@@ -371,6 +371,35 @@ fun DictateRecordingScreen() = FlorisScreen {
         )
         // Voice Keyboard: how long the last dictations took (per chunk, and stop to final text).
         val timingNav = LocalNavController.current
+        // Voice Keyboard: split typing correction, tuned from the user's typing test.
+        SwitchPreference(
+            prefs.keyboard.vkSplitTouchCorrection,
+            icon = Icons.Default.Segment,
+            title = "Split typing correction",
+            summary = "On the split keyboard, count a touch where your thumb was aiming",
+        )
+        dev.patrickgold.jetpref.datastore.ui.DialogSliderPreference(
+            prefs.keyboard.vkSplitTouchSpreadPercent,
+            title = "Reach correction (outward)",
+            valueLabel = { "$it %" },
+            min = 0,
+            max = 40,
+            stepIncrement = 5,
+        )
+        dev.patrickgold.jetpref.datastore.ui.DialogSliderPreference(
+            prefs.keyboard.vkSplitTouchLiftRightPercent,
+            title = "Right thumb lift (of a row)",
+            valueLabel = { "$it %" },
+            min = 0,
+            max = 60,
+            stepIncrement = 5,
+        )
+        SwitchPreference(
+            prefs.keyboard.vkGlideWhenSplit,
+            icon = Icons.Default.Segment,
+            title = "Swipe typing on the split keyboard",
+            summary = "Off by default: quick taps were read as swipes",
+        )
         // Voice Keyboard: learning from corrections and writing style (on the user's server).
         Preference(
             icon = Icons.Default.Segment,

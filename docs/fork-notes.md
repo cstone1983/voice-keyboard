@@ -80,6 +80,23 @@ Server API under `<base_url>vk/` (same Bearer key; the server maps key -> person
   delete (`DELETE vk/learned/<id>`), Export (`GET vk/export`), Forget everything (`DELETE vk/data`).
   "Signed in as" from `GET vk/me` after saving a server.
 
+## Split keyboard tuned from a typing test (2026-11-14)
+
+Test: three pangram-style sentences, unfolded, two thumbs, autocorrect off. ~18 % characters wrong,
+almost all systematic: on each half touches land pulled toward the half's centre (r→e, t→r, a→s, b→n,
+p→o), the right thumb about a row low (o→k ×4, h→n ×3), space→"." ×5, stray spaces from taps read as
+swipes. Changes:
+
+- `SplitTouchCorrection`: letter touches spread 15 % outward from each half's centre, right half lifted
+  30 % of a row; only letters/digits, never across the gap; space/enter/backspace/punctuation unchanged.
+  Settings → Dictation → "Split typing correction" + two sliders.
+- Halves narrower on a foldable (310 dp portrait, 330 dp landscape).
+- Split bottom row: right space bar takes a third of the "." key.
+- Swipe typing off while split (setting to turn it back on).
+- Space bar shows the short language name ("English").
+
+Next: repeat the test and adjust the two values.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

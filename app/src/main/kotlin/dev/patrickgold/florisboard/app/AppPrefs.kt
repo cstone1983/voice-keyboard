@@ -1565,6 +1565,12 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
             default = emptyMap(),
             serializer = ImeWindowConfig.ByTypeSerializer,
         )
+        // Voice Keyboard: split typing correction (see SplitTouchCorrection), from the user's typing test.
+        val vkSplitTouchCorrection = boolean(key = "vk__split_touch_correction", default = true)
+        val vkSplitTouchSpreadPercent = int(key = "vk__split_touch_spread_percent", default = 15)
+        val vkSplitTouchLiftRightPercent = int(key = "vk__split_touch_lift_right_percent", default = 30)
+        // Swipe typing on a split keyboard (quick taps were read as swipes in the typing test).
+        val vkGlideWhenSplit = boolean(key = "vk__glide_when_split", default = false)
         val numberRow = boolean(
             key = "keyboard__number_row",
             default = false,
