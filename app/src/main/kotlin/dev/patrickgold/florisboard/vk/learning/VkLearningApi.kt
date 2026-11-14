@@ -24,7 +24,12 @@ import java.util.concurrent.TimeUnit
  * Bearer key as transcription. The server decides the person from the key; nothing else identifies them.
  * Blocking calls; run them off the main thread. Never logs bodies or the key.
  */
-class VkLearningApi(private val baseUrl: String, private val apiKey: String) {
+class VkLearningApi(
+    private val baseUrl: String,
+    private val apiKey: String,
+    /** Default person for requests (X-VK-As); see [VkIdentity]. */
+    private val defaultActAs: String? = null,
+) {
 
     class HttpException(val status: Int, message: String) : IOException(message)
 
@@ -34,9 +39,10 @@ class VkLearningApi(private val baseUrl: String, private val apiKey: String) {
         .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    private fun request(path: String): Request.Builder = Request.Builder()
+    private fun request(path: String, actAs: String?): Request.Builder = Request.Builder()
         .url(baseUrl + path)
         .header("Authorization", "Bearer $apiKey")
+        .apply { if (!actAs.isNullOrBlank()) header(VkIdentity.HEADER, actAs) }
 
     private fun run(req: Request): String = client.newCall(req).execute().use { resp ->
         val body = resp.body.string()
@@ -44,12 +50,12 @@ class VkLearningApi(private val baseUrl: String, private val apiKey: String) {
         body
     }
 
-    fun get(path: String): String = run(request(path).get().build())
+    fun get(path: String, actAs: String? = defaultActAs): String = run(request(path, actAs).get().build())
 
-    fun post(path: String, json: String): String =
-        run(request(path).post(json.toRequestBody(JSON)).build())
+    fun post(path: String, json: String, actAs: String? = defaultActAs): String =
+        run(request(path, actAs).post(json.toRequestBody(JSON)).build())
 
-    fun delete(path: String): String = run(request(path).delete().build())
+    fun delete(path: String, actAs: String? = defaultActAs): String = run(request(path, actAs).delete().build())
 
     companion object {
         private val JSON = "application/json; charset=utf-8".toMediaType()
@@ -64,7 +70,7 @@ class VkLearningApi(private val baseUrl: String, private val apiKey: String) {
             if (!account.isCustom || account.customBaseUrl.isBlank() || account.apiKey.isBlank()) return null
             if (ProviderRegistry.byId(id) != null) return null
             val base = account.customBaseUrl.let { if (it.endsWith("/")) it else "$it/" }
-            return VkLearningApi(base, account.apiKey)
+            return VkLearningApi(base, account.apiKey, VkIdentity.currentUser(prefs))
         }
     }
 }

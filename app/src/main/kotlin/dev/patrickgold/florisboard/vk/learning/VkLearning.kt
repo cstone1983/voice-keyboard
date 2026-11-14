@@ -228,7 +228,11 @@ object VkLearning {
         scope.launch {
             queueMutex.withLock {
                 val items = readQueue().toMutableList()
-                items.add(buildJsonObject { put("path", path); put("body", body); put("ts", System.currentTimeMillis()) })
+                items.add(buildJsonObject {
+                    put("path", path); put("body", body); put("ts", System.currentTimeMillis())
+                    // Who it was captured for, so a later user switch cannot misfile it.
+                    VkIdentity.currentUser(prefs)?.let { put("as", it) }
+                })
                 prefs.dictate.vkLearningQueue.set(JsonArray(items).toString())
             }
             flush()
@@ -251,11 +255,13 @@ object VkLearning {
                     if (now - ts > QUEUE_MAX_AGE_MS) continue
                     val path = item["path"]?.jsonPrimitive?.contentOrNull ?: continue
                     val body = item["body"]?.jsonPrimitive?.contentOrNull ?: continue
+                    val actAs = item["as"]?.jsonPrimitive?.contentOrNull ?: VkIdentity.currentUser(prefs)
+                    if (actAs == null) { left.add(item); continue } // nobody selected yet: keep it
                     try {
-                        api.post(path, body)
+                        api.post(path, body, actAs = actAs)
                     } catch (e: VkLearningApi.HttpException) {
-                        // A request the server refuses (4xx other than auth) will never succeed: drop it.
-                        if (e.status == 401 || e.status == 403 || e.status >= 500) left.add(item)
+                        // A request the server refuses (4xx other than auth / user selection) never succeeds: drop it.
+                        if (e.status == 400 || e.status == 401 || e.status == 403 || e.status >= 500) left.add(item)
                         Log.i(TAG, "upload $path failed http=${e.status}")
                     } catch (e: Exception) {
                         left.add(item)
@@ -288,18 +294,27 @@ object VkLearning {
         if (app.isEmpty()) return
         flush()
         scope.launch {
+            val key = profileKey(app) ?: return@launch // nobody selected: no profile
             val cache = readProfiles()
-            val cached = cache[app]?.jsonObject
+            val cached = cache[key]?.jsonObject
             val fetchedAt = cached?.get("fetched_at")?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
             if (System.currentTimeMillis() - fetchedAt < PROFILE_MAX_AGE_MS) return@launch
             val api = VkLearningApi.forActiveServer(prefs) ?: return@launch
             runCatching {
                 val body = api.get("vk/profile?app=" + java.net.URLEncoder.encode(app, "UTF-8"))
                 val profile = json.parseToJsonElement(body).jsonObject
-                val updated = JsonObject(cache + (app to JsonObject(profile + ("fetched_at" to JsonPrimitive(System.currentTimeMillis())))))
+                val updated = JsonObject(cache + (key to JsonObject(profile + ("fetched_at" to JsonPrimitive(System.currentTimeMillis())))))
                 prefs.dictate.vkProfileCache.set(updated.toString())
             }.onFailure { Log.i(TAG, "profile fetch failed (${it.javaClass.simpleName})") }
         }
+    }
+
+    /** Profiles are per person and app. */
+    private fun profileKey(app: String): String? = VkIdentity.currentUser(prefs)?.let { "$it|$app" }
+
+    /** Drop cached profiles (after a user switch the next keyboard start fetches the new person's). */
+    suspend fun clearProfiles() {
+        prefs.dictate.vkProfileCache.set("{}")
     }
 
     private fun readProfiles(): JsonObject = runCatching {
@@ -309,7 +324,8 @@ object VkLearning {
     /** The profile for the app the keyboard is on, from the cache; null when there is none. */
     fun profile(): Profile? {
         if (VkLearningApi.forActiveServer(prefs) == null) return null
-        val obj = readProfiles()[currentApp]?.jsonObject ?: return null
+        val key = profileKey(currentApp) ?: return null
+        val obj = readProfiles()[key]?.jsonObject ?: return null
         fun str(k: String) = (obj[k] as? JsonPrimitive)?.contentOrNull.orEmpty()
         val reps = (obj["replacements"] as? JsonArray).orEmpty().mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
@@ -360,16 +376,23 @@ object VkLearning {
 
     // ---- Account -------------------------------------------------------------------------------
 
-    /** `GET vk/me`; stores and returns the display name ("Chris"), or null when the server does not say. */
+    /**
+     * `GET vk/me` as the selected person; stores and returns the display name ("Chris"). Null when nobody is
+     * selected or the server wants a selection (then the picker is shown), or the server cannot be reached.
+     */
     suspend fun refreshSignedIn(prefsModel: FlorisPreferenceModel = prefs): String? {
         val api = VkLearningApi.forActiveServer(prefsModel) ?: return null
+        if (VkIdentity.currentUser(prefsModel) == null) return null
         return runCatching {
             val obj = json.parseToJsonElement(api.get("vk/me")).jsonObject
             val user = (obj["user"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+            val name = (obj["name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: displayName(user)
             val device = (obj["device"] as? JsonPrimitive)?.contentOrNull.orEmpty()
-            prefsModel.dictate.vkSignedInUser.set(user)
+            prefsModel.dictate.vkSignedInUser.set(name)
             prefsModel.dictate.vkSignedInDevice.set(device)
-            user.takeIf { it.isNotBlank() }
+            name.takeIf { it.isNotBlank() }
+        }.onFailure { e ->
+            if (VkIdentity.needsSelection(e)) VkIdentity.select(prefsModel, null)
         }.getOrNull()
     }
 

@@ -71,6 +71,11 @@ Server API under `<base_url>vk/` (same Bearer key; the server maps key -> person
   (with the previous-chunk context), `replacements` are applied whole-word before cleanup,
   `cleanup_style` + up to 3 examples + "fix only fillers/grammar/punctuation, keep wording and tone, add
   nothing" are added to the automatic Clean up prompt.
+- Who's using the keyboard (household key): `VkIdentity` is the one place that decides it. Picked from
+  `GET vk/users` (own-server form and Learning → Switch user), sent as `X-VK-As` on every `vk/` request
+  (not on speech-to-text or cleanup). A 400 "select a user" shows the picker. Queued uploads keep the
+  person they were captured for; profiles are cached per person and app. To be replaced by a real
+  sign-in later.
 - Settings → Dictation → Learning: both switches (default off), excluded apps, learned words with
   delete (`DELETE vk/learned/<id>`), Export (`GET vk/export`), Forget everything (`DELETE vk/data`).
   "Signed in as" from `GET vk/me` after saving a server.

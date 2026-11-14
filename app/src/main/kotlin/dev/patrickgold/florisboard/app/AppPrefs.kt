@@ -759,6 +759,8 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         val vkProfileCache = string(key = "vk__profile_cache", default = "{}")
         // "Signed in as": the display name the server returned for this key (GET vk/me).
         val vkSignedInUser = string(key = "vk__signed_in_user", default = "")
+        // Who is using this keyboard (household key): the person id sent as X-VK-As. See VkIdentity.
+        val vkActingUser = string(key = "vk__acting_user", default = "")
         val vkSignedInDevice = string(key = "vk__signed_in_device", default = "")
         // Voice Keyboard: keep the chunks out of the text field until the final, cleaned-up text is ready.
         val vkHoldTextUntilDone = boolean(

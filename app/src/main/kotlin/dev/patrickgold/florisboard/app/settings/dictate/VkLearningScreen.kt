@@ -80,6 +80,9 @@ fun VkLearningScreen() = FlorisScreen {
         var listError by remember { mutableStateOf<String?>(null) }
         var confirmForget by remember { mutableStateOf(false) }
         var excludedText by remember(excluded) { mutableStateOf(excluded) }
+        val actingUser by prefs.dictate.vkActingUser.collectAsState()
+        var people by remember { mutableStateOf<List<dev.patrickgold.florisboard.vk.learning.VkIdentity.Person>>(emptyList()) }
+        var showPicker by remember { mutableStateOf(false) }
 
         fun api(): VkLearningApi? = VkLearningApi.forActiveServer(prefs)
 
@@ -92,12 +95,25 @@ fun VkLearningScreen() = FlorisScreen {
                         listError = null
                         items = parseLearned(body)
                     }
-                    .onFailure { listError = "Could not load (${it.message ?: it.javaClass.simpleName})." }
+                    .onFailure {
+                        if (dev.patrickgold.florisboard.vk.learning.VkIdentity.needsSelection(it)) {
+                            showPicker = true
+                            listError = "Choose who's using this keyboard."
+                        } else {
+                            listError = "Could not load (${it.message ?: it.javaClass.simpleName})."
+                        }
+                    }
             }
         }
 
         LaunchedEffect(Unit) {
-            withContext(Dispatchers.IO) { VkLearning.refreshSignedIn() }
+            api()?.let { a ->
+                people = withContext(Dispatchers.IO) {
+                    runCatching { dev.patrickgold.florisboard.vk.learning.VkIdentity.users(a) }.getOrDefault(emptyList())
+                }
+            }
+            val name = withContext(Dispatchers.IO) { VkLearning.refreshSignedIn() }
+            if (name == null && people.isNotEmpty()) showPicker = true
             loadLearned()
         }
 
@@ -116,10 +132,34 @@ fun VkLearningScreen() = FlorisScreen {
         }
 
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text(
-                if (user.isNotBlank()) "Signed in as ${VkLearning.displayName(user)}" else "Not signed in (connect your own server)",
-                style = MaterialTheme.typography.titleMedium,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    when {
+                        actingUser.isNotBlank() && user.isNotBlank() -> "Signed in as ${VkLearning.displayName(user)}"
+                        api() == null -> "Not signed in (connect your own server)"
+                        else -> "Nobody selected"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                if (people.isNotEmpty()) TextButton(onClick = { showPicker = !showPicker }) { Text("Switch user") }
+            }
+            if (showPicker && people.isNotEmpty()) {
+                dev.patrickgold.florisboard.vk.learning.VkUserPicker(
+                    people = people,
+                    selected = actingUser.takeIf { it.isNotBlank() },
+                    onPick = { person ->
+                        scope.launch {
+                            dev.patrickgold.florisboard.vk.learning.VkIdentity.select(prefs, person)
+                            VkLearning.clearProfiles()
+                            withContext(Dispatchers.IO) { VkLearning.refreshSignedIn() }
+                            showPicker = false
+                            loadLearned()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Text(
                 "Everything is stored only on your own server. Password fields and excluded apps are never read.",
                 style = MaterialTheme.typography.bodySmall,

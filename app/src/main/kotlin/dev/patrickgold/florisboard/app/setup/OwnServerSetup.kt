@@ -106,6 +106,8 @@ internal data class OwnServerChoice(
     val chatModel: String,
     val models: List<String>,
     val transcriptionModels: List<String>,
+    /** Who's using this keyboard (household key), or null to keep the current choice. */
+    val person: dev.patrickgold.florisboard.vk.learning.VkIdentity.Person? = null,
 )
 
 /**
@@ -207,6 +209,7 @@ internal suspend fun FlorisPreferenceModel.saveOwnServer(choice: OwnServerChoice
     )
     dictate.providerAccounts.set(accounts.put(account))
     dictate.transcriptionProviderId.set(id)
+    choice.person?.let { dev.patrickgold.florisboard.vk.learning.VkIdentity.select(this, it) }
     if (choice.chatModel.isNotBlank()) {
         dictate.rewordingProviderId.set(id)
     }
@@ -244,6 +247,9 @@ internal fun OwnServerSetup(
         })
     }
     var sttModel by rememberSaveable { mutableStateOf(existing?.transcriptionModel.orEmpty()) }
+    // Household key: the people it may act as (GET vk/users), and who is picked.
+    var people by remember { mutableStateOf<List<dev.patrickgold.florisboard.vk.learning.VkIdentity.Person>>(emptyList()) }
+    var pickedUser by rememberSaveable { mutableStateOf(prefs.dictate.vkActingUser.get().takeIf { it.isNotBlank() }) }
     var chatModel by rememberSaveable { mutableStateOf(existing?.chatModel.orEmpty()) }
     var photoFile by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -274,6 +280,15 @@ internal fun OwnServerSetup(
                     .filter { it.id.isNotBlank() }
                     .sortedBy { it.id.lowercase() }
                 models = list
+                // The people this key may act as; a server without the learning API just has none.
+                people = withContext(Dispatchers.IO) {
+                    runCatching {
+                        dev.patrickgold.florisboard.vk.learning.VkIdentity.users(
+                            dev.patrickgold.florisboard.vk.learning.VkLearningApi(url, apiKey.trim()),
+                        )
+                    }.getOrDefault(emptyList())
+                }
+                if (pickedUser !in people.map { it.user }) pickedUser = if (people.size == 1) people[0].user else null
                 if (list.isEmpty()) {
                     status = (status.orEmpty() + " The server listed no models; type the model names below.").trim()
                 } else {
@@ -309,6 +324,7 @@ internal fun OwnServerSetup(
         code.chatModel?.let { chatModel = it }
         models = emptyList()
         testAndLoad()
+        code.user?.let { u -> pickedUser = u }
         code.user?.let { u ->
             status = "Setup code for ${u.replaceFirstChar { it.uppercase() }}" + (code.device?.let { " ($it)" } ?: "") + ". " + status.orEmpty()
         }
@@ -443,10 +459,20 @@ internal fun OwnServerSetup(
                 options = models.sortedBy { it.looksLikeSpeech() }.map { it.id },
                 onChange = { chatModel = it },
             )
+            if (people.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                dev.patrickgold.florisboard.vk.learning.VkUserPicker(
+                    people = people,
+                    selected = pickedUser,
+                    onPick = { pickedUser = it.user },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Spacer(Modifier.height(16.dp))
             Button(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !busy && normalizedUrl().startsWith("http") && sttModel.isNotBlank(),
+                enabled = !busy && normalizedUrl().startsWith("http") && sttModel.isNotBlank() &&
+                    (people.isEmpty() || pickedUser != null),
                 onClick = {
                     onSave(
                         OwnServerChoice(
@@ -457,6 +483,7 @@ internal fun OwnServerSetup(
                             chatModel = chatModel.trim(),
                             models = models.map { it.id },
                             transcriptionModels = models.filter { it.isTranscriptionModel }.map { it.id },
+                            person = people.firstOrNull { it.user == pickedUser },
                         ),
                     )
                 },
