@@ -341,12 +341,57 @@ object VkLearning {
 
     // ---- Upload queue ----------------------------------------------------------------------------
 
-    private fun enqueueAudio(dictationId: String, file: java.io.File) {
+    /**
+     * Voice training (VkTrainingScreen): one recording with its exact transcript. Always uploaded — the user
+     * started the training to send exactly this — as a dictation record (`final` = the script, or the
+     * user-corrected free talk) followed by the audio, which the server counts toward fine-tuning.
+     */
+    fun submitTraining(
+        context: android.content.Context,
+        raw: String,
+        final: String,
+        audio: java.io.File,
+        audioMs: Long,
+        transcribeMs: Long,
+        sttModel: String,
+        kind: String,
+    ) {
+        appContext = context.applicationContext
+        val id = java.util.UUID.randomUUID().toString()
+        val dir = java.io.File(context.filesDir, "vk_clips").apply { mkdirs() }
+        val clip = java.io.File(dir, "$id.wav")
+        runCatching { audio.copyTo(clip, overwrite = true) }.onFailure { return }
+        val body = buildJsonObject {
+            put("id", id)
+            put("app", context.packageName + ".training")
+            put("category", "other")
+            put("lang", languageCode().ifEmpty { "en" })
+            put("stt_model", sttModel)
+            put("raw", raw)
+            put("cleaned", raw)
+            put("final", final)
+            put("audio_ms", audioMs)
+            put("low_confidence", buildJsonArray { })
+            put("source", "training")
+            put("training_kind", kind)
+            put("timings", buildJsonObject {
+                put("stop_to_text_ms", transcribeMs)
+                put("transcribe_ms", transcribeMs)
+                put("cleanup_ms", 0)
+            })
+        }
+        enqueue("vk/dictations", body.toString())
+        enqueueAudio(id, clip, training = true)
+        Log.i(TAG, "queued training $kind audioMs=$audioMs")
+    }
+
+    private fun enqueueAudio(dictationId: String, file: java.io.File, training: Boolean = false) {
         scope.launch {
             queueMutex.withLock {
                 val items = readQueue().toMutableList()
                 items.add(buildJsonObject {
                     put("kind", "audio"); put("id", dictationId); put("file", file.absolutePath)
+                    if (training) put("training", true)
                     put("ts", System.currentTimeMillis())
                     VkIdentity.currentUser(prefs)?.let { put("as", it) }
                 })
@@ -399,7 +444,8 @@ object VkLearning {
                     if (isAudio) {
                         val id = item["id"]?.jsonPrimitive?.contentOrNull
                         val file = item["file"]?.jsonPrimitive?.contentOrNull?.let { java.io.File(it) }
-                        if (id == null || file == null || !file.exists() || !prefs.dictate.vkLearnVoice.get()) {
+                        val training = item["training"]?.jsonPrimitive?.contentOrNull == "true"
+                        if (id == null || file == null || !file.exists() || !(training || prefs.dictate.vkLearnVoice.get())) {
                             file?.delete()
                             continue
                         }

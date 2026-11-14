@@ -13,6 +13,7 @@ package dev.patrickgold.florisboard.app.settings.dictate
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Spellcheck
 import androidx.compose.material.icons.filled.Timer
@@ -81,6 +82,12 @@ fun VkHubScreen() = FlorisScreen {
         }
 
         PreferenceGroup(title = "Learning") {
+            Preference(
+                icon = Icons.Default.RecordVoiceOver,
+                title = "Voice training",
+                summary = "Read sentences aloud so your server learns your voice (counts toward 120 minutes)",
+                onClick = { navController.navigate(Routes.Settings.VkTraining) },
+            )
             SwitchPreference(
                 prefs.dictate.vkLearnCorrections,
                 icon = Icons.Default.School,

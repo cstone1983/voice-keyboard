@@ -139,6 +139,17 @@ temperature 0.2 and `max_tokens` (≈ 2× input tokens + 50) confirmed on the wi
   replacements) inserted, logged as `VKCleanup: rejected reason=…`, no corrections for that dictation.
 - Trade-off: "more sentences" also rejects a cleanup that only splits an unpunctuated run-on sentence.
 
+## Voice training (2026-11-14)
+
+Settings → Voice Keyboard → Learning → Voice training (`VkTrainingScreen`, `vk/training/VkTraining`):
+- Reading rounds of 10 sentences (generic script: messages, numbers/dates/times, punctuation, home and
+  tech; 3 per round built from the user's learned words from `vk/learned`) and free-talk prompts.
+- Each recording is transcribed by the user's server (no cleanup) and shown against the script with
+  missed words struck through and an accuracy score; free talk is corrected by the user.
+- "Send" uploads `POST vk/dictations` (`final` = script or corrected text, `source: "training"`) and the
+  audio to `vk/audio` (always for training; Wi-Fi-only setting respected). Progress bar from `vk/stats`
+  toward 120 minutes, "ready" when the server says `fine_tune_ready`.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.
