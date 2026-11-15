@@ -150,6 +150,33 @@ Settings → Voice Keyboard → Learning → Voice training (`VkTrainingScreen`,
   audio to `vk/audio` (always for training; Wi-Fi-only setting respected). Progress bar from `vk/stats`
   toward 120 minutes, "ready" when the server says `fine_tune_ready`.
 
+## Server review fixes (2026-11-15)
+
+1. Chunk echo: the continuity text goes LAST in the Whisper prompt (Whisper keeps the end); a chunk whose
+   words are > 60 % already at the end of the previous text or in the prompt is dropped
+   (`VkChunkGuard`, log `phase=chunkEchoDropped`).
+2. Chunk defaults (new v2 keys so installed phones change too): at least 8 s before a pause may cut,
+   0.6 s pause, 15 s max.
+3. Chunk retries: 3 attempts, only for network/timeout/5xx; 20 s per request (25 s whole call); a lost
+   chunk shows a "Part of your dictation could not be transcribed" toast.
+4. Learning queue: record and audio are queued in one locked write; audio waits while its record is
+   anywhere in the queue, and a 404 is retried later instead of deleting the clip. A voice clip always
+   gets its record, even with "Learn from my corrections" off.
+5. Timings/audio_ms are attached to the dictation when measured (`VkLearning.attachTimings`), not read
+   at send time.
+6. Only 400 "select a user", 401/403/408/429 and 5xx are retried; other 4xx are dropped. Training sends
+   raw = final when the transcription is empty.
+7. Automatic cleanup: 8 s limit (client and coroutine), then the raw text is inserted.
+8. No `vk/profile` calls and no learned profile applied when both learning switches are off.
+9. Setup QR: `user_id` is the identity (`*` = household key, ask via `vk/users`); `user` is display only.
+10. Spoken punctuation: only marks it inserted get a space/capital ("voice.example.com", "e.g.",
+    "Node.js" untouched).
+11. Learning queue and profile cache moved from the settings datastore (backed up / device transfer) to
+    `files/vk_learning` (not in the backup rules); the old settings copies are cleared once. http://
+    servers only on the home network (private IPs, .lan/.local/.home.arpa/.internal, bare names);
+    cleartext stays enabled in the manifest for those. SecretBox fails closed (key not stored if the
+    Keystore fails). `/v1/models` `task: automatic-speech-recognition` marks speech models.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

@@ -121,7 +121,10 @@ internal data class OwnServerSetupCode(
     val transcriptionModel: String? = null,
     val chatModel: String? = null,
     /** Display only: who the server says this key belongs to, and the device name. */
+    /** Display only ("Chris", "household"); never used as the id. */
     val user: String? = null,
+    /** The person id for X-VK-As ("chris"); "*" for a household key, where the app asks who is using it. */
+    val userId: String? = null,
     val device: String? = null,
 )
 
@@ -137,15 +140,34 @@ internal fun parseOwnServerSetupCode(text: String): OwnServerSetupCode? {
     val version = (obj["v"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 1
     if (version > 1 && str("base_url") == null) return null
     val baseUrl = str("base_url", "url") ?: return null
-    if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) return null
+    if (!isAllowedServerUrl(baseUrl)) return null
     return OwnServerSetupCode(
         baseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/",
         apiKey = str("api_key", "key").orEmpty(),
         transcriptionModel = str("stt_model", "transcription_model"),
         chatModel = str("chat_model", "cleanup_model"),
         user = str("user"),
+        userId = str("user_id"),
         device = str("device"),
     )
+}
+
+/**
+ * https always; http only for a server on the home network (private address, `.lan`/`.local`/`.home.arpa`/
+ * `.internal` name, or a bare host name), so the key is never sent unencrypted over the internet.
+ */
+internal fun isAllowedServerUrl(url: String): Boolean {
+    if (url.startsWith("https://", ignoreCase = true)) return true
+    if (!url.startsWith("http://", ignoreCase = true)) return false
+    val host = runCatching { java.net.URI(url).host }.getOrNull()?.lowercase()?.trim('[', ']') ?: return false
+    if (host == "localhost" || !host.contains('.') && !host.contains(':')) return true
+    if (listOf(".lan", ".local", ".home.arpa", ".internal").any { host.endsWith(it) }) return true
+    val p = host.split('.').mapNotNull { it.toIntOrNull() }
+    if (p.size == 4) {
+        return p[0] == 10 || p[0] == 127 || (p[0] == 192 && p[1] == 168) ||
+            (p[0] == 172 && p[1] in 16..31) || (p[0] == 169 && p[1] == 254) || (p[0] == 100 && p[1] in 64..127)
+    }
+    return host.startsWith("fd") || host.startsWith("fe80") // IPv6 unique-local / link-local
 }
 
 /** Reads a QR code from a photo or screenshot. Null if none was found. */
@@ -250,6 +272,8 @@ internal fun OwnServerSetup(
     // Household key: the people it may act as (GET vk/users), and who is picked.
     var people by remember { mutableStateOf<List<dev.patrickgold.florisboard.vk.learning.VkIdentity.Person>>(emptyList()) }
     var pickedUser by rememberSaveable { mutableStateOf(prefs.dictate.vkActingUser.get().takeIf { it.isNotBlank() }) }
+    // The QR's display name, for the person picked from the QR when the server's list is not available.
+    var qrDisplayName by rememberSaveable { mutableStateOf<String?>(null) }
     var chatModel by rememberSaveable { mutableStateOf(existing?.chatModel.orEmpty()) }
     var photoFile by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -259,6 +283,10 @@ internal fun OwnServerSetup(
         val url = normalizedUrl()
         if (!url.startsWith("https://") && !url.startsWith("http://")) {
             error = "The address must start with https:// (or http:// on your home network)."
+            return
+        }
+        if (!isAllowedServerUrl(url)) {
+            error = "Use https:// for a server outside your home network (the key would be sent unencrypted)."
             return
         }
         busy = true
@@ -288,7 +316,10 @@ internal fun OwnServerSetup(
                         )
                     }.getOrDefault(emptyList())
                 }
-                if (pickedUser !in people.map { it.user }) pickedUser = if (people.size == 1) people[0].user else null
+                // Only a list from the server can overrule the choice; without one a QR user_id stays.
+                if (people.isNotEmpty() && pickedUser !in people.map { it.user }) {
+                    pickedUser = if (people.size == 1) people[0].user else null
+                }
                 if (list.isEmpty()) {
                     status = (status.orEmpty() + " The server listed no models; type the model names below.").trim()
                 } else {
@@ -324,7 +355,9 @@ internal fun OwnServerSetup(
         code.chatModel?.let { chatModel = it }
         models = emptyList()
         testAndLoad()
-        code.user?.let { u -> pickedUser = u }
+        // user_id is the identity; "*" (household key) or none means: ask who is using it (vk/users).
+        pickedUser = code.userId?.takeIf { it != "*" }?.lowercase()
+        qrDisplayName = code.user
         code.user?.let { u ->
             status = "Setup code for ${u.replaceFirstChar { it.uppercase() }}" + (code.device?.let { " ($it)" } ?: "") + ". " + status.orEmpty()
         }
@@ -481,7 +514,7 @@ internal fun OwnServerSetup(
             Spacer(Modifier.height(16.dp))
             Button(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !busy && normalizedUrl().startsWith("http") && sttModel.isNotBlank() &&
+                enabled = !busy && isAllowedServerUrl(normalizedUrl()) && sttModel.isNotBlank() &&
                     (people.isEmpty() || pickedUser != null),
                 onClick = {
                     onSave(
@@ -495,7 +528,9 @@ internal fun OwnServerSetup(
                             transcriptionModels = models.filter { it.isTranscriptionModel }.map { it.id },
                             person = people.firstOrNull { it.user == pickedUser }
                                 ?: pickedUser?.let { u ->
-                                    dev.patrickgold.florisboard.vk.learning.VkIdentity.Person(u, u.replaceFirstChar { it.uppercase() })
+                                    dev.patrickgold.florisboard.vk.learning.VkIdentity.Person(
+                                        u, qrDisplayName ?: u.replaceFirstChar { it.uppercase() },
+                                    )
                                 },
                         ),
                     )

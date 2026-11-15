@@ -775,13 +775,15 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
             key = "vk__hold_text_until_done",
             default = true,
         )
+        // v2 keys (2026-11-15 server review): each chunk costs ~2.5 s fixed on the CPU-only server, so chunks are
+        // longer — at least 8 s before a pause may end one; new keys so installed phones get the new defaults.
         val vkChunkSilenceMs = int(
-            key = "vk__chunk_silence_ms",
-            default = 500,
+            key = "vk__chunk_silence_ms_v2",
+            default = 600,
         )
         val vkChunkMinSeconds = int(
-            key = "vk__chunk_min_seconds",
-            default = 3,
+            key = "vk__chunk_min_seconds_v2",
+            default = 8,
         )
         val vkChunkMaxSeconds = int(
             key = "vk__chunk_max_seconds",

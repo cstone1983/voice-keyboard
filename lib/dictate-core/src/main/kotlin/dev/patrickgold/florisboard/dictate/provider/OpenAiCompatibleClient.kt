@@ -1392,7 +1392,11 @@ class OpenAiCompatibleClient(
                     inputModalities = if (isAudioInputChatModel(it)) listOf("audio") else emptyList(),
                     // Carry the raw output modalities so dedicated STT models (output "transcription") are
                     // recognised for the transcription picker, separately from chat-audio models (#157).
-                    outputModalities = it.architecture?.outputModalities ?: emptyList(),
+                    outputModalities = when {
+                        // Voice Keyboard: a self-hosted speech server's own word for a speech-to-text model.
+                        it.task.equals("automatic-speech-recognition", ignoreCase = true) -> listOf("transcription")
+                        else -> it.architecture?.outputModalities ?: emptyList()
+                    },
                 )
             }
             .sortedBy { it.id.lowercase() }
@@ -2127,6 +2131,8 @@ class OpenAiCompatibleClient(
         @SerialName("input_modalities") val inputModalities: List<String>? = null, // Groq (top-level)
         @SerialName("output_modalities") val outputModalities: List<String>? = null, // Groq (top-level)
         val capabilities: CapabilitiesDto? = null, // Mistral
+        // Voice Keyboard: speaches says what a model is for ("automatic-speech-recognition", "text-to-speech").
+        val task: String? = null,
     )
 
     @Serializable

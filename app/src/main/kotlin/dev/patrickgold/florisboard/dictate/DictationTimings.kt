@@ -93,6 +93,7 @@ object DictationTimings {
         )
         chunks.clear()
         _entries.value = (listOf(entry) + _entries.value).take(KEEP)
+        dev.patrickgold.florisboard.vk.learning.VkLearning.attachTimings(entry)
         Log.i(
             LOG_TAG,
             "done mode=${if (chunked) "chunked" else "single"} recordedS=$recordedSeconds chunks=${entry.chunks.size} " +

@@ -154,8 +154,12 @@ import java.util.concurrent.atomic.AtomicLong
 object DictateController {
 
     private const val LATENCY_LOG_TAG = "DictateLatency"
-    /** Voice Keyboard: waits before each attempt of a segment upload (5 attempts over ~15 s). */
-    private val SEGMENT_RETRY_BACKOFF_MS = longArrayOf(0L, 1_000L, 2_000L, 4_000L, 8_000L)
+    /** Voice Keyboard: waits before each attempt of a chunk upload (3 attempts; network/server errors only). */
+    private val SEGMENT_RETRY_BACKOFF_MS = longArrayOf(0L, 1_000L, 3_000L)
+    /** Voice Keyboard: the whole automatic cleanup may take this long before the raw text is used. */
+    private const val CLEANUP_TIMEOUT_MS = 8_000L
+    /** Voice Keyboard: read/write timeout for one chunk request, in seconds. */
+    private const val SEGMENT_TIMEOUT_S = 20L
     private val latencyFlowIds = AtomicLong()
 
     /** Correlates privacy-safe phase timings for one batch transcription without logging its contents. */
@@ -422,6 +426,17 @@ object DictateController {
     // value it was cut under, and a result from another one is dropped: it belongs to a dictation that is
     // over, and the maps and the field it would write into now belong to the next one (#172).
     private var segmentGeneration = 0
+    /** Voice Keyboard: the last chunk request's error, and how many chunks of this dictation were lost. */
+    @Volatile private var lastSegmentError: Throwable? = null
+    @Volatile private var segmentLostCount = 0
+
+    private fun isRetryableSegmentError(t: Throwable?): Boolean = when (t) {
+        null -> false
+        is java.io.IOException -> true
+        is DictateApiException -> t.kind == DictateApiException.Kind.NETWORK ||
+            t.kind == DictateApiException.Kind.TIMEOUT || t.kind == DictateApiException.Kind.SERVER_ERROR
+        else -> false
+    }
     /** Voice Keyboard: the last dictation's cleanup answer failed the sanity check (raw text inserted). */
     private var vkCleanupRejected = false
     // Voice Keyboard: one segment upload at a time, in cut order (the server's Whisper uses every CPU core).
@@ -3198,6 +3213,7 @@ object DictateController {
 
     private fun initSegmented(appContext: Context) {
         synchronized(segmentUploadGates) { segmentUploadGates.clear() }
+        segmentLostCount = 0
         DictationTimings.begin()
         dev.patrickgold.florisboard.vk.learning.VkLearning.beginDictation()
         segmentedActive = true
@@ -3413,10 +3429,24 @@ object DictateController {
                     for (backoffMs in SEGMENT_RETRY_BACKOFF_MS) {
                         if (backoffMs > 0) delay(backoffMs)
                         attempts++
+                        lastSegmentError = null
                         val started = SystemClock.elapsedRealtime()
                         segment = transcribeSegmentRaw(appContext, wav, continuity, speechChecked = true)
                         requestMs = SystemClock.elapsedRealtime() - started
                         if (segment != null) break
+                        // Voice Keyboard: retry only what can get better (network, timeout, server error);
+                        // a 401/404/400 fails the same way every time.
+                        if (!isRetryableSegmentError(lastSegmentError)) break
+                    }
+                    if (segment == null) {
+                        segmentLostCount++
+                    } else if (dev.patrickgold.florisboard.vk.learning.VkChunkGuard.isEcho(
+                            segment!!.text, continuity, transcriptionStylePrompt(prefs),
+                        )
+                    ) {
+                        // Whisper read its prompt back on a quiet chunk: not speech, drop it (lengths only).
+                        Log.i(LATENCY_LOG_TAG, "phase=chunkEchoDropped index=$idx chars=${segment!!.text.length}")
+                        segment = SegmentText("", segment!!.fallbackEngine)
                     }
                     DictationTimings.addChunk(
                         DictationTimings.Chunk(
@@ -3500,6 +3530,19 @@ object DictateController {
      * floating button there is no preview ([segmentsHeldBack]), so the replace is the one insert.
      */
     private suspend fun finalizeSegmentedEnd(appContext: Context) {
+        // Voice Keyboard: say so when part of the dictation could not be transcribed, instead of a silent gap.
+        val lost = segmentLostCount
+        segmentLostCount = 0
+        if (lost > 0) {
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(
+                    appContext,
+                    if (lost == 1) "Part of your dictation could not be transcribed (1 chunk lost)."
+                    else "Part of your dictation could not be transcribed ($lost chunks lost).",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
         val account = transcriptionAccount()
         val preset = presetFor(account)
         val model = transcriptionModelFor(appContext, account, preset)
@@ -3577,7 +3620,12 @@ object DictateController {
         }
         val language = wireLanguage(model)
         val style = transcriptionStylePrompt(prefs)
-        val prompt = continuity.takeLast(200).trim().let { if (it.isEmpty()) style else "$it $style".trim() }
+        // Voice Keyboard: the previous text goes LAST — Whisper keeps the end of a long prompt and drops the
+        // start, and the text just before this chunk is what continuity needs.
+        val prompt = listOfNotNull(
+            style?.trim()?.takeIf { it.isNotEmpty() },
+            continuity.takeLast(200).trim().takeIf { it.isNotEmpty() },
+        ).joinToString(" ").ifEmpty { null }
         // Time compression (issue #272): every segment is billed on its own, so the speed-up belongs here
         // too — this is where a long dictation's duration actually adds up. Segments are transcribed
         // concurrently, hence a cache file per segment; the segment itself is left alone because it is
@@ -3626,7 +3674,9 @@ object DictateController {
                         proxy = prefs.dictate.dictateProxyConfig(),
                         useChatAudio = false,
                         trustUserCerts = account.trustUserCerts,
-                        timeoutSeconds = prefs.dictate.requestTimeout.get().toLong(),
+                        // Voice Keyboard: a chunk is a few seconds of audio; it must not hang for minutes.
+                        timeoutSeconds = minOf(prefs.dictate.requestTimeout.get().toLong(), SEGMENT_TIMEOUT_S),
+                        callTimeoutSeconds = SEGMENT_TIMEOUT_S + 5,
                         handOverUnreachable = fallbackId != null,
                     ).transcribe(request)
                 } catch (e: DictateApiException) {
@@ -3639,7 +3689,8 @@ object DictateController {
                             proxy = prefs.dictate.dictateProxyConfig(),
                             useChatAudio = false,
                             trustUserCerts = account.trustUserCerts,
-                            timeoutSeconds = prefs.dictate.requestTimeout.get().toLong(),
+                            timeoutSeconds = minOf(prefs.dictate.requestTimeout.get().toLong(), SEGMENT_TIMEOUT_S),
+                            callTimeoutSeconds = SEGMENT_TIMEOUT_S + 5,
                             handOverUnreachable = fallbackId != null,
                         ).transcribe(request.copy(audioFile = toUpload))
                     } else {
@@ -3666,6 +3717,7 @@ object DictateController {
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
+            lastSegmentError = t // read by the retry loop: only network/server trouble is worth another try
             null
         } finally {
             spedUp?.let { runCatching { it.delete() } }
@@ -5181,9 +5233,15 @@ object DictateController {
     ): String {
         val systemContent = listOf(system, systemPrompt()).filter { it.isNotBlank() }.joinToString("\n\n")
         val userContent = DictatePromptDefaults.REWORDING_TEXT_FRAME + "\n\n<text>\n" + input + "\n</text>"
-        return DictatePromptDefaults.stripTextTags(
-            requestRewordRaw(userContent, reasoning, temperature, maxTokens, systemContent = systemContent),
-        )
+        // A cleanup normally takes 1-2 s; with "insert only the final text" a stuck one would show nothing for
+        // minutes. After CLEANUP_TIMEOUT_MS the raw text goes in (rewordOrKeep keeps the input on the throw).
+        val answer = withTimeoutOrNull(CLEANUP_TIMEOUT_MS) {
+            requestRewordRaw(
+                userContent, reasoning, temperature, maxTokens,
+                systemContent = systemContent, timeoutSeconds = CLEANUP_TIMEOUT_MS / 1000,
+            )
+        } ?: throw DictateApiException(DictateApiException.Kind.TIMEOUT, "Cleanup took too long")
+        return DictatePromptDefaults.stripTextTags(answer)
     }
 
     private suspend fun requestRewordRaw(
@@ -5192,6 +5250,7 @@ object DictateController {
         temperature: Double? = null,
         maxTokens: Int? = null,
         systemContent: String? = null,
+        timeoutSeconds: Long? = null,
     ): String {
         val account = rewordingAccount()
         val apiKey = rewordingApiKey()
@@ -5211,7 +5270,9 @@ object DictateController {
             baseUrlOverride = baseUrlOverrideFor(account),
             proxy = prefs.dictate.dictateProxyConfig(),
             trustUserCerts = account.trustUserCerts,
-            timeoutSeconds = prefs.dictate.requestTimeout.get().toLong(),
+            timeoutSeconds = timeoutSeconds ?: prefs.dictate.requestTimeout.get().toLong(),
+            // Bounds the whole call (retries included) when a cleanup limit is given.
+            callTimeoutSeconds = timeoutSeconds,
         )
         // Reasoning (#141): the account's own setting, unless the prompt asks for a level of its own (#155).
         val reasoningWire = rewordingReasoningWire(account, preset, model, reasoning)

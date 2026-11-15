@@ -794,8 +794,8 @@ private fun VkChunkSliders() {
         value = minS,
         onValueChange = { minS = it },
         onValueChangeFinished = { scope.launch { prefs.dictate.vkChunkMinSeconds.set(minS.roundToInt()) } },
-        valueRange = 1f..8f,
-        steps = 6,
+        valueRange = 1f..12f,
+        steps = 10,
     )
     var maxS by remember(maxSeconds) { mutableStateOf(maxSeconds.toFloat()) }
     Text(

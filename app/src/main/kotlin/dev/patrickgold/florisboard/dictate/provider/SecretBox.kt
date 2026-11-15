@@ -66,9 +66,9 @@ object SecretBox {
             openedCache[sealed] = plain
             sealed
         } catch (e: Exception) {
-            // Never include the value in the log.
-            flogError { "SecretBox: could not encrypt a provider key (${e.javaClass.simpleName})" }
-            plain
+            // Fail closed: never store the key in plain text. It has to be entered again (never logged).
+            flogError { "SecretBox: could not encrypt a provider key (${e.javaClass.simpleName}); not stored" }
+            ""
         }
     }
 

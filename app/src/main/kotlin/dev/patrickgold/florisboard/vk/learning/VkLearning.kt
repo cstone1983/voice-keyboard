@@ -73,7 +73,18 @@ object VkLearning {
         val cleanupMs: Long,
         val clip: java.io.File?,
         val cleanupRejected: Boolean,
-    )
+    ) {
+        /** This dictation's timings, attached when they are measured (not looked up at send time). */
+        @Volatile var timings: dev.patrickgold.florisboard.dictate.DictationTimings.Entry? = null
+    }
+
+    /** The newest dictation's record, waiting for its timings (see [attachTimings]). */
+    @Volatile private var lastRecord: Record? = null
+
+    /** Called by DictationTimings when a dictation's stop-to-text is known. */
+    fun attachTimings(entry: dev.patrickgold.florisboard.dictate.DictationTimings.Entry) {
+        lastRecord?.let { if (it.timings == null) it.timings = entry }
+    }
 
     // The dictation in progress: filled while it is transcribed and cleaned, taken at insert time.
     private val pendingLow = mutableListOf<String>()
@@ -130,7 +141,7 @@ object VkLearning {
             cleanupMs = pendingCleanupMs,
             clip = clip,
             cleanupRejected = cleanupRejected,
-        )
+        ).also { lastRecord = it }
     }
 
     private class Tracked(
@@ -281,9 +292,11 @@ object VkLearning {
 
     /** POST vk/dictations (with "Learn from my corrections"), then the voice clip (with "Help it learn my voice"). */
     private fun sendRecord(r: Record, app: String, lang: String, sttModel: String, final: String) {
-        if (prefs.dictate.vkLearnCorrections.get()) {
-            val t = dev.patrickgold.florisboard.dictate.DictationTimings.entries.value.firstOrNull()
-                ?.takeIf { System.currentTimeMillis() - it.finishedAtMillis < 10 * 60_000L }
+        val items = mutableListOf<JsonObject>()
+        val sendsClip = r.clip?.exists() == true && prefs.dictate.vkLearnVoice.get()
+        // The record goes with "Learn from my corrections", and with every voice clip (the clip needs it).
+        if (prefs.dictate.vkLearnCorrections.get() || sendsClip) {
+            val t = r.timings // captured with the dictation, however long the user took to send it
             val body = buildJsonObject {
                 put("id", r.id)
                 put("app", app)
@@ -301,15 +314,14 @@ object VkLearning {
                     put("cleanup_ms", r.cleanupMs)
                 })
             }
-            enqueue("vk/dictations", body.toString())
+            items.add(postItem("vk/dictations", body.toString()))
             Log.i(TAG, "queued dictation record low=${r.lowConfidence.size}")
         }
-        val clip = r.clip ?: return
-        if (prefs.dictate.vkLearnVoice.get() && clip.exists()) {
-            enqueueAudio(r.id, clip)
-        } else {
-            clip.delete()
+        val clip = r.clip
+        if (clip != null) {
+            if (prefs.dictate.vkLearnVoice.get() && clip.exists()) items.add(audioItem(r.id, clip)) else clip.delete()
         }
+        enqueueAll(items)
     }
 
     /** The dictated span inside [full], found between the text that stood before and after it. */
@@ -367,8 +379,9 @@ object VkLearning {
             put("category", "other")
             put("lang", languageCode().ifEmpty { "en" })
             put("stt_model", sttModel)
-            put("raw", raw)
-            put("cleaned", raw)
+            // The server needs raw/cleaned text; a silent or failed transcription sends the known text instead.
+            put("raw", raw.ifBlank { final })
+            put("cleaned", raw.ifBlank { final })
             put("final", final)
             put("audio_ms", audioMs)
             put("low_confidence", buildJsonArray { })
@@ -380,23 +393,30 @@ object VkLearning {
                 put("cleanup_ms", 0)
             })
         }
-        enqueue("vk/dictations", body.toString())
-        enqueueAudio(id, clip, training = true)
+        // Record and audio in one step, so the audio can never be queued (and sent) before its record.
+        enqueueAll(listOf(postItem("vk/dictations", body.toString()), audioItem(id, clip, training = true)))
         Log.i(TAG, "queued training $kind audioMs=$audioMs")
     }
 
-    private fun enqueueAudio(dictationId: String, file: java.io.File, training: Boolean = false) {
+    private fun audioItem(dictationId: String, file: java.io.File, training: Boolean = false): JsonObject =
+        buildJsonObject {
+            put("kind", "audio"); put("id", dictationId); put("file", file.absolutePath)
+            if (training) put("training", true)
+            put("ts", System.currentTimeMillis())
+            VkIdentity.currentUser(prefs)?.let { put("as", it) }
+        }
+
+    private fun postItem(path: String, body: String): JsonObject = buildJsonObject {
+        put("path", path); put("body", body); put("ts", System.currentTimeMillis())
+        // Who it was captured for, so a later user switch cannot misfile it.
+        VkIdentity.currentUser(prefs)?.let { put("as", it) }
+    }
+
+    /** Appends [items] to the queue in one locked write (keeps a record ahead of its audio), then sends. */
+    private fun enqueueAll(items: List<JsonObject>) {
+        if (items.isEmpty()) return
         scope.launch {
-            queueMutex.withLock {
-                val items = readQueue().toMutableList()
-                items.add(buildJsonObject {
-                    put("kind", "audio"); put("id", dictationId); put("file", file.absolutePath)
-                    if (training) put("training", true)
-                    put("ts", System.currentTimeMillis())
-                    VkIdentity.currentUser(prefs)?.let { put("as", it) }
-                })
-                prefs.dictate.vkLearningQueue.set(JsonArray(items).toString())
-            }
+            queueMutex.withLock { writeQueue(readQueue() + items) }
             flush()
         }
     }
@@ -408,24 +428,30 @@ object VkLearning {
         return !cm.isActiveNetworkMetered
     }
 
-    private fun enqueue(path: String, body: String) {
-        scope.launch {
-            queueMutex.withLock {
-                val items = readQueue().toMutableList()
-                items.add(buildJsonObject {
-                    put("path", path); put("body", body); put("ts", System.currentTimeMillis())
-                    // Who it was captured for, so a later user switch cannot misfile it.
-                    VkIdentity.currentUser(prefs)?.let { put("as", it) }
-                })
-                prefs.dictate.vkLearningQueue.set(JsonArray(items).toString())
-            }
-            flush()
-        }
+    private fun enqueue(path: String, body: String) = enqueueAll(listOf(postItem(path, body)))
+
+    // The queue and the profile cache hold dictated text, so they live in plain files under the app's own
+    // storage (files/vk_learning), not in the settings that Android backs up or moves to a new phone.
+    private fun storeFile(name: String): java.io.File? {
+        val ctx = appContext ?: dev.patrickgold.florisboard.florisApplicationOrNull() ?: return null
+        return java.io.File(java.io.File(ctx.filesDir, "vk_learning").apply { mkdirs() }, name)
     }
 
     private fun readQueue(): List<JsonObject> = runCatching {
-        json.parseToJsonElement(prefs.dictate.vkLearningQueue.get()).jsonArray.map { it.jsonObject }
+        val f = storeFile("queue.json")?.takeIf { it.exists() } ?: return emptyList()
+        json.parseToJsonElement(f.readText()).jsonArray.map { it.jsonObject }
     }.getOrDefault(emptyList())
+
+    private fun writeQueue(items: List<JsonObject>) {
+        runCatching { storeFile("queue.json")?.writeText(JsonArray(items).toString()) }
+    }
+
+    /** Whether to keep an upload the server refused for another try. */
+    private fun retryable(e: VkLearningApi.HttpException): Boolean = when {
+        e.status == 400 -> e.message?.contains("select a user", ignoreCase = true) == true
+        e.status == 401 || e.status == 403 || e.status == 408 || e.status == 429 -> true
+        else -> e.status >= 500
+    }
 
     /** Sends what is waiting; keeps what fails for later, drops what is older than seven days. */
     fun flush() {
@@ -434,7 +460,12 @@ object VkLearning {
                 val api = VkLearningApi.forActiveServer(prefs) ?: return@withLock
                 val now = System.currentTimeMillis()
                 val left = mutableListOf<JsonObject>()
-                for (item in readQueue()) {
+                val all = readQueue()
+                // Records still waiting anywhere in the queue: their audio must wait too.
+                val unsentRecords = all.filter { it["path"]?.jsonPrimitive?.contentOrNull == "vk/dictations" }
+                    .mapNotNull { it["body"]?.jsonPrimitive?.contentOrNull }
+                    .toMutableList()
+                for (item in all) {
                     val ts = item["ts"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: now
                     val isAudio = item["kind"]?.jsonPrimitive?.contentOrNull == "audio"
                     if (now - ts > QUEUE_MAX_AGE_MS) {
@@ -450,10 +481,7 @@ object VkLearning {
                             continue
                         }
                         // After its dictation record, and on Wi-Fi unless the user allows mobile data.
-                        val recordPending = left.any { other ->
-                            other["path"]?.jsonPrimitive?.contentOrNull == "vk/dictations" &&
-                                other["body"]?.jsonPrimitive?.contentOrNull?.contains("\"$id\"") == true
-                        }
+                        val recordPending = unsentRecords.any { it.contains("\"$id\"") }
                         if (recordPending || (prefs.dictate.vkVoiceWifiOnly.get() && !onUnmeteredNetwork())) {
                             left.add(item)
                             continue
@@ -464,7 +492,9 @@ object VkLearning {
                             file.delete()
                             Log.i(TAG, "uploaded voice clip bytes=${file.length()}")
                         } catch (e: VkLearningApi.HttpException) {
-                            if (e.status == 400 || e.status == 401 || e.status == 403 || e.status >= 500) left.add(item) else file.delete()
+                            // 404 "unknown dictation": its record has not arrived yet — try again later.
+                            if (e.status == 404 || retryable(e)) left.add(item) else file.delete()
+                            Log.i(TAG, "voice clip upload http=${e.status}")
                         } catch (e: Exception) {
                             left.add(item)
                         }
@@ -476,16 +506,18 @@ object VkLearning {
                     if (actAs == null) { left.add(item); continue } // nobody selected yet: keep it
                     try {
                         api.post(path, body, actAs = actAs)
+                        unsentRecords.remove(body)
                     } catch (e: VkLearningApi.HttpException) {
-                        // A request the server refuses (4xx other than auth / user selection) never succeeds: drop it.
-                        if (e.status == 400 || e.status == 401 || e.status == 403 || e.status >= 500) left.add(item)
+                        // Only "select a user", auth and server trouble are worth another try; any other 4xx
+                        // (e.g. "raw or cleaned text required") would fail the same way for seven days.
+                        if (retryable(e)) left.add(item) else unsentRecords.remove(body)
                         Log.i(TAG, "upload $path failed http=${e.status}")
                     } catch (e: Exception) {
                         left.add(item)
                         Log.i(TAG, "upload $path deferred (${e.javaClass.simpleName})")
                     }
                 }
-                prefs.dictate.vkLearningQueue.set(JsonArray(left).toString())
+                writeQueue(left)
             }
         }
     }
@@ -511,7 +543,15 @@ object VkLearning {
         val app = info?.packageName.orEmpty()
         currentApp = app
         if (app.isEmpty()) return
+        appContext = appContext ?: dev.patrickgold.florisboard.florisApplicationOrNull()
+        // Once: learning data used to sit in the backed-up settings; it now lives in files/vk_learning.
+        scope.launch {
+            if (prefs.dictate.vkLearningQueue.get() != "[]") prefs.dictate.vkLearningQueue.set("[]")
+            if (prefs.dictate.vkProfileCache.get() != "{}") prefs.dictate.vkProfileCache.set("{}")
+        }
         flush()
+        // With learning off nothing is fetched: the request would tell the server which apps are used.
+        if (!enabled()) return
         scope.launch {
             val key = profileKey(app) ?: return@launch // nobody selected: no profile
             val cache = readProfiles()
@@ -525,7 +565,7 @@ object VkLearning {
                 )
                 val profile = json.parseToJsonElement(body).jsonObject
                 val updated = JsonObject(cache + (key to JsonObject(profile + ("fetched_at" to JsonPrimitive(System.currentTimeMillis())))))
-                prefs.dictate.vkProfileCache.set(updated.toString())
+                storeFile("profiles.json")?.writeText(updated.toString())
             }.onFailure { Log.i(TAG, "profile fetch failed (${it.javaClass.simpleName})") }
         }
     }
@@ -535,15 +575,17 @@ object VkLearning {
 
     /** Drop cached profiles (after a user switch the next keyboard start fetches the new person's). */
     suspend fun clearProfiles() {
-        prefs.dictate.vkProfileCache.set("{}")
+        storeFile("profiles.json")?.delete()
     }
 
     private fun readProfiles(): JsonObject = runCatching {
-        json.parseToJsonElement(prefs.dictate.vkProfileCache.get()).jsonObject
+        val f = storeFile("profiles.json")?.takeIf { it.exists() } ?: return JsonObject(emptyMap())
+        json.parseToJsonElement(f.readText()).jsonObject
     }.getOrDefault(JsonObject(emptyMap()))
 
     /** The profile for the app the keyboard is on, from the cache; null when there is none. */
     fun profile(): Profile? {
+        if (!enabled()) return null // learning off: nothing learned is applied
         if (VkLearningApi.forActiveServer(prefs) == null) return null
         val key = profileKey(currentApp) ?: return null
         val obj = readProfiles()[key]?.jsonObject ?: return null
@@ -627,6 +669,8 @@ object VkLearning {
 
     /** After "Forget everything": drop the local caches too. */
     suspend fun clearLocal() {
+        storeFile("profiles.json")?.delete()
+        storeFile("queue.json")?.delete()
         prefs.dictate.vkProfileCache.set("{}")
         prefs.dictate.vkLearningQueue.set("[]")
         tracked = null

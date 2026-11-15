@@ -32,3 +32,22 @@ class OwnServerSetupCodeTest {
         assertNull(parseOwnServerSetupCode("""{"v":1,"base_url":"ftp://x/v1/","api_key":"$key"}"""))
     }
 }
+
+class ServerUrlPolicyTest {
+    @Test
+    fun `https always, http only on the home network`() {
+        kotlin.test.assertTrue(isAllowedServerUrl("https://voice.example.com/v1/"))
+        kotlin.test.assertTrue(isAllowedServerUrl("http://10.10.11.113:8000/v1/"))
+        kotlin.test.assertTrue(isAllowedServerUrl("http://voice.lan/v1/"))
+        kotlin.test.assertTrue(isAllowedServerUrl("http://192.168.1.5/v1/"))
+        kotlin.test.assertFalse(isAllowedServerUrl("http://voice.example.com/v1/"))
+        kotlin.test.assertFalse(isAllowedServerUrl("http://8.8.8.8/v1/"))
+    }
+
+    @Test
+    fun `setup code user_id is the identity, user is display only`() {
+        val code = parseOwnServerSetupCode("""{"v":1,"base_url":"https://x.example/v1/","api_key":"k","user":"Chris","user_id":"chris"}""")
+        assertEquals("chris", code?.userId)
+        assertEquals("Chris", code?.user)
+    }
+}

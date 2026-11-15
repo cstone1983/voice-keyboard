@@ -60,6 +60,9 @@ import java.lang.ref.WeakReference
  */
 private var FlorisApplicationReference = WeakReference<FlorisApplication?>(null)
 
+/** Voice Keyboard: the running application, for code without a Context at hand (learning storage). */
+fun florisApplicationOrNull(): FlorisApplication? = FlorisApplicationReference.get()
+
 @Suppress("unused")
 class FlorisApplication : Application() {
     private val mainHandler by lazy { Handler(mainLooper) }

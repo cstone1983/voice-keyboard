@@ -79,12 +79,19 @@ object VkCleanup {
 
     /** "comma", "period", "question mark", "new line" … said aloud become the marks themselves. */
     fun spokenPunctuation(text: String): String {
+        // Every mark this step inserts is followed by MARK until the end, so the spacing and capital fixes
+        // below touch only those — never "voice.example.com", "e.g." or "Node.js" that were already there.
         var out = text
-        for ((re, mark) in SPOKEN) out = re.replace(out, Regex.escapeReplacement(mark))
-        // A mark directly followed by a letter gets its space back ("hi,there" -> "hi, there").
-        out = out.replace(Regex("""([,.?!])(?=\p{L})"""), "$1 ")
-        // Capital after a sentence end that came from a spoken mark.
-        out = out.replace(Regex("""([.?!]\s+|\n)(\p{Ll})""")) { m -> m.groupValues[1] + m.groupValues[2].uppercase() }
-        return out.trim()
+        for ((re, mark) in SPOKEN) out = re.replace(out, Regex.escapeReplacement(mark + MARK))
+        // An inserted mark directly followed by a letter gets its space ("hi,there" -> "hi, there").
+        out = out.replace(Regex("""([,.?!])$MARK(?=\p{L})"""), "$1 ")
+        // A capital after an inserted sentence end or line break.
+        out = out.replace(Regex("""([.?!\n])$MARK(\s*)(\p{Ll})""")) { m ->
+            m.groupValues[1] + m.groupValues[2] + m.groupValues[3].uppercase()
+        }
+        return out.replace(MARK, "").trim()
     }
+
+    /** Invisible marker for punctuation inserted by [spokenPunctuation]; removed before it returns. */
+    private const val MARK = "\u0001"
 }

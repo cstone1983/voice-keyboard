@@ -47,7 +47,8 @@ class VkLearningApi(
 
     private fun run(req: Request): String = client.newCall(req).execute().use { resp ->
         val body = resp.body.string()
-        if (!resp.isSuccessful) throw HttpException(resp.code, "HTTP ${resp.code}")
+        // The server's short error text (e.g. "select a user") decides what is retried; never logged.
+        if (!resp.isSuccessful) throw HttpException(resp.code, "HTTP ${resp.code} ${body.take(300)}")
         body
     }
 

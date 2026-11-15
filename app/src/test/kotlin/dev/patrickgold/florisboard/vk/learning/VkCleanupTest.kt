@@ -46,5 +46,10 @@ class VkCleanupTest {
             VkCleanup.spokenPunctuation("Hi John comma are you coming question mark I am period new line see you exclamation mark"),
         )
         assertEquals("We have a trial period of two weeks.", VkCleanup.spokenPunctuation("We have a trial period of two weeks full stop"))
+        // Existing dots are not touched: hosts, abbreviations, file names.
+        assertEquals(
+            "Open voice.example.com, e.g. on Node.js today.",
+            VkCleanup.spokenPunctuation("Open voice.example.com comma e.g. on Node.js today full stop"),
+        )
     }
 }
