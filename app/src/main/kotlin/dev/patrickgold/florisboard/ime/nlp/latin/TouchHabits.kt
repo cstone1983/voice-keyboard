@@ -203,5 +203,9 @@ object TouchHabits {
         savedAt = model.changes
     }
 
+    /** The touch habits learned while nobody was selected, as JSON ("" when there are none). */
+    fun unassignedJson(): String =
+        runCatching { fileFor("default")?.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
+
     private fun fileFor(who: String): File? = dir?.let { File(it.apply { mkdirs() }, "touch_$who.json") }
 }

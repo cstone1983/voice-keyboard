@@ -119,14 +119,42 @@ object VkPersonSync {
         scope.launch { syncNow(context) }
     }
 
-    /** The selected person changed: bring their profile down now. */
+    private val _status = kotlinx.coroutines.flow.MutableStateFlow("")
+    /** What the last sync did, for the settings page ("" before the first). */
+    val status: kotlinx.coroutines.flow.StateFlow<String> = _status
+
+    /**
+     * The selected person changed: download their whole profile now, settings included (a person's
+     * settings are theirs, whatever the phone had), then their spelling hint.
+     */
     fun onPersonChanged(context: Context) {
-        if (!enabled()) return
-        scope.launch { syncNow(context) }
-        scope.launch { runCatching { VkVocabularyHint.refresh(context) } }
+        scope.launch {
+            if (enabled()) {
+                _status.value = "Downloading profile…"
+                syncNow(context, takeServerSettings = true)
+            }
+            runCatching { VkVocabularyHint.refresh(context) }
+        }
     }
 
-    suspend fun syncNow(context: Context): Result = mutex.withLock {
+    /**
+     * Merges the server's copy in and uploads the result. [takeServerSettings]: use the person's settings
+     * from the server (on a person switch); otherwise this device's go up.
+     */
+    suspend fun syncNow(context: Context, takeServerSettings: Boolean = false): Result = mutex.withLock {
+        val r = syncLocked(context, takeServerSettings)
+        _status.value = when (r) {
+            Result.OK -> "Synced " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())
+            Result.NO_SERVER -> "Connect your own server first"
+            Result.NO_PERSON -> "Choose who is using the keyboard first"
+            Result.NO_ENDPOINT -> "Your server does not support this yet"
+            Result.OFF -> "Profile sync is off"
+            Result.FAILED -> "Could not reach the server"
+        }
+        r
+    }
+
+    private suspend fun syncLocked(context: Context, takeServerSettings: Boolean): Result {
         if (!enabled()) return Result.OFF
         val api = VkLearningApi.forActiveServer(prefs) ?: return Result.NO_SERVER
         val who = VkPersonFiles.personKey() ?: return Result.NO_PERSON
@@ -143,7 +171,9 @@ object VkPersonSync {
                 throw e
             }
             val firstOnThisDevice = !meta.getBoolean("synced_$who", false)
-            if (remote != null && remote.isNotEmpty()) mergeIn(context, remote, applySettings = firstOnThisDevice)
+            if (remote != null && remote.isNotEmpty()) {
+                mergeIn(context, remote, applySettings = takeServerSettings || firstOnThisDevice)
+            }
             api.post("vk/personal", buildUpload(context).toString())
             meta.edit()
                 .putLong("last_$who", System.currentTimeMillis())
@@ -263,6 +293,73 @@ object VkPersonSync {
                 for ((name, s) in SETTINGS) runCatching { put(name, s.read(prefs)) }
             })
         }
+    }
+
+    // ---- The phone's earlier learning ----------------------------------------------------------------
+
+    /**
+     * Whether this phone holds learning from while nobody was selected (or from before people could be
+     * chosen) that has not been added to anyone. Shown as an offer; never added on its own.
+     */
+    fun hasUnassignedPhoneData(context: Context): Boolean {
+        if (meta(context).getBoolean("phone_data_adopted", false)) return false
+        val dbs = listOf(
+            dev.patrickgold.florisboard.ime.dictionary.LearnedWordsDatabase.DB_FILE_NAME,
+            dev.patrickgold.florisboard.ime.dictionary.FlorisUserDictionaryDatabase.DB_FILE_NAME,
+        )
+        return dbs.any { context.getDatabasePath(it).exists() } ||
+            java.io.File(context.filesDir, "vk_learning/words_" + dev.patrickgold.florisboard.ime.nlp.latin.PersonalWordCounts.keyFor(null) + ".json").exists()
+    }
+
+    /**
+     * Adds the phone's unassigned learning to the selected person (only what they do not have yet), then
+     * syncs it to their server profile. Only when the user asks for it.
+     */
+    suspend fun adoptPhoneData(context: Context): Result {
+        if (VkPersonFiles.personKey() == null) return Result.NO_PERSON
+        val app = context.applicationContext
+        runCatching {
+            val legacy = dev.patrickgold.florisboard.ime.dictionary.LearnedWordsDatabase.new(app)
+            try {
+                val dao = legacy.dao()
+                for (e in dao.allWords()) LearnedWordsStore.importWord(app, e.word, e.key, e.lang, e.count, e.lastUsed)
+                for (e in dao.allBigrams()) LearnedWordsStore.importBigram(app, e.prev, e.word, e.lang, e.count, e.lastUsed)
+            } finally {
+                legacy.close()
+            }
+        }.onFailure { Log.i(TAG, "adopt learned words failed (${it.javaClass.simpleName})") }
+        runCatching {
+            val legacy = androidx.room.Room.databaseBuilder(
+                app,
+                dev.patrickgold.florisboard.ime.dictionary.FlorisUserDictionaryDatabase::class.java,
+                dev.patrickgold.florisboard.ime.dictionary.FlorisUserDictionaryDatabase.DB_FILE_NAME,
+            ).allowMainThreadQueries().build()
+            try {
+                val dm = DictionaryManager.default()
+                dm.loadUserDictionariesIfNecessary()
+                val dao = dm.florisUserDictionaryDao()
+                if (dao != null) {
+                    val have = dao.queryAll().map { it.word.lowercase() + "|" + it.locale.orEmpty() }.toHashSet()
+                    for (e in legacy.userDictionaryDao().queryAll()) {
+                        if (have.add(e.word.lowercase() + "|" + e.locale.orEmpty())) {
+                            dao.insert(UserDictionaryEntry(0, e.word, e.freq, e.locale, e.shortcut))
+                        }
+                    }
+                }
+            } finally {
+                legacy.close()
+            }
+        }.onFailure { Log.i(TAG, "adopt dictionary failed (${it.javaClass.simpleName})") }
+        runCatching {
+            val unassigned = dev.patrickgold.florisboard.ime.nlp.latin.PersonalWordCounts(java.io.File(app.filesDir, "vk_learning"))
+                .apply { useUser(null) }
+            PersonalWords.current(app, prefs).merge(unassigned.export())
+        }
+        runCatching {
+            TouchHabits.unassignedJson().takeIf { it.isNotBlank() }?.let { TouchHabits.current().merge(it); TouchHabits.save() }
+        }
+        meta(app).edit().putBoolean("phone_data_adopted", true).apply()
+        return if (enabled()) syncNow(app) else Result.OK
     }
 
     private fun meta(context: Context) = context.applicationContext.getSharedPreferences(META, Context.MODE_PRIVATE)

@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -195,8 +196,36 @@ fun VkLearningScreen() = FlorisScreen {
                     ) { Text("Use") }
                 }
             }
+            // The selected person's profile is downloaded when they are chosen; say how that went.
+            val syncStatus by dev.patrickgold.florisboard.vk.learning.VkPersonSync.status.collectAsState()
+            if (actingUser.isNotBlank() && syncStatus.isNotBlank()) {
+                Text("Profile: $syncStatus", style = MaterialTheme.typography.bodySmall)
+            }
+            // Learning from before people could be chosen belongs to nobody until the user says whose it is.
+            var offerAdopt by remember(actingUser) {
+                mutableStateOf(actingUser.isNotBlank() && dev.patrickgold.florisboard.vk.learning.VkPersonSync.hasUnassignedPhoneData(context))
+            }
+            if (offerAdopt) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "This phone has learning from before anyone was selected (learned words, personal dictionary). " +
+                        "It is not part of anyone's profile.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = {
+                    offerAdopt = false
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.adoptPhoneData(context.applicationContext)
+                        }
+                        Toast.makeText(context, "Added to ${VkLearning.displayName(actingUser)}'s profile", Toast.LENGTH_SHORT).show()
+                        loadLearned()
+                    }
+                }) { Text("Add it to ${VkLearning.displayName(actingUser)}'s profile") }
+            }
             Text(
-                "Everything is stored only on your own server. Password fields and excluded apps are never read.",
+                "Your profile is kept on your own server and on this phone for the person selected. " +
+                    "Password fields and excluded apps are never read.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

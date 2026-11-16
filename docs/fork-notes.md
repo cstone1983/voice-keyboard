@@ -197,8 +197,11 @@ to other devices through their own server. Server contract: `docs/server-persona
 
 1. **Per-person files** (`vk/learning/VkPersonFiles.kt`): learned words and word pairs
    (`dictate_learned_words`), the personal dictionary (`floris_user_dictionary`), word counts and touch
-   habits each have one file per person (hashed id). The first person chosen on a phone keeps the files
-   from before, so nothing is lost. Switching person reopens them.
+   habits each have one file per person (hashed id), filled from that person's server profile. Nobody
+   inherits what is on the phone: the old files are used only while nobody is selected, and are added to
+   a person only with "Add it to <name>'s profile" on the Learning page (offered once).
+   Choosing a person downloads their whole profile at once, settings included, then their spelling hint
+   and voice model. An already selected person gets it on the first keyboard start after the update.
 2. **Spelling hint for speech-to-text** (`VkVocabularyHint.kt`): up to 20 of the person's own words (learned
    words + personal dictionary, most used first, ≤180 chars) go at the start of the transcription prompt.
    Built in the background when recording starts. Switch: "Spell my names and words".

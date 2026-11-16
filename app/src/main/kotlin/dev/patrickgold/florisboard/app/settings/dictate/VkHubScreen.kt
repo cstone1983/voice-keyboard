@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Spellcheck
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,7 +62,8 @@ fun VkHubScreen() = FlorisScreen {
         val personalModel by prefs.dictate.vkPersonalSttModel.collectAsState()
         val context = LocalContext.current
         val syncScope = rememberCoroutineScope()
-        var syncStatus by remember { mutableStateOf("Brings your profile down and sends this phone's changes up") }
+        var syncing by remember { mutableStateOf(false) }
+        val lastSync by dev.patrickgold.florisboard.vk.learning.VkPersonSync.status.collectAsState()
         val active = accounts[providerId]?.takeIf { it.isCustom }
 
         PreferenceGroup(title = "Your AI server") {
@@ -124,21 +126,18 @@ fun VkHubScreen() = FlorisScreen {
             )
             Preference(
                 title = "Sync my profile now",
-                summary = syncStatus,
+                summary = when {
+                    syncing -> "Syncing…"
+                    lastSync.isNotBlank() -> lastSync
+                    else -> "Brings your profile down and sends this phone's changes up"
+                },
                 iconSpaceReserved = true,
                 enabledIf = { prefs.dictate.vkProfileSync isEqualTo true },
                 onClick = {
-                    syncStatus = "Syncing…"
+                    syncing = true
                     syncScope.launch {
-                        val r = dev.patrickgold.florisboard.vk.learning.VkPersonSync.syncNow(context.applicationContext)
-                        syncStatus = when (r) {
-                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.OK -> "Synced"
-                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.NO_SERVER -> "Connect your own server first"
-                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.NO_PERSON -> "Choose who is using the keyboard first"
-                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.NO_ENDPOINT -> "Your server does not support this yet"
-                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.OFF -> "Profile sync is off"
-                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.FAILED -> "Could not reach the server"
-                        }
+                        dev.patrickgold.florisboard.vk.learning.VkPersonSync.syncNow(context.applicationContext)
+                        syncing = false
                     }
                 },
             )

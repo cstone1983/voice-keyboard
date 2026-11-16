@@ -35,12 +35,15 @@ object VkIdentity {
         prefs.dictate.vkActingUser.get().takeIf { it.isNotBlank() }
 
     suspend fun select(prefs: FlorisPreferenceModel, person: Person?) {
+        val changed = currentUser(prefs) != person?.user?.takeIf { it.isNotBlank() }
         prefs.dictate.vkActingUser.set(person?.user.orEmpty())
         prefs.dictate.vkSignedInUser.set(person?.name.orEmpty())
         // The on-device vocabulary is per person: open the new person's personal dictionary now (the
         // learned words, word counts and touch habits switch by themselves on their next read).
         runCatching { dev.patrickgold.florisboard.ime.dictionary.DictionaryManager.default().loadUserDictionariesIfNecessary() }
-        dev.patrickgold.florisboard.florisApplicationOrNull()?.let { VkPersonSync.onPersonChanged(it) }
+        // …and bring the person's whole profile down from the server: words, predictions, dictionary,
+        // touch habits, settings, spelling hint and voice model.
+        if (changed) dev.patrickgold.florisboard.florisApplicationOrNull()?.let { VkPersonSync.onPersonChanged(it) }
     }
 
     /** `GET vk/users` (blocking): the people this key may act as. */
