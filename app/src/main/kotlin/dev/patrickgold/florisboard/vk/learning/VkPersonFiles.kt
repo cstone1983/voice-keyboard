@@ -1,0 +1,41 @@
+/*
+ * Copyright (C) 2026 Voice Keyboard contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+package dev.patrickgold.florisboard.vk.learning
+
+import android.content.Context
+import dev.patrickgold.florisboard.app.FlorisPreferenceStore
+import dev.patrickgold.florisboard.ime.nlp.latin.PersonalWordCounts
+
+/**
+ * Voice Keyboard: which on-device files belong to the person selected in the Voice Keyboard settings
+ * (learned words and word pairs, the personal dictionary, word counts, touch habits).
+ *
+ * Each person gets their own files, named with a hash of the person's id (never the id itself). The
+ * first person chosen on a phone keeps the files that existed before people could be chosen, so nothing
+ * learned so far is lost; while nobody is chosen those same files are used.
+ */
+object VkPersonFiles {
+    private val prefs by FlorisPreferenceStore
+    private const val META = "vk_person_files"
+    private const val LEGACY_OWNER = "legacy_owner"
+
+    /** Hash of the selected person's id, or null when nobody is selected. */
+    fun personKey(): String? = VkIdentity.currentUser(prefs)?.let { PersonalWordCounts.keyFor(it) }
+
+    /** The file (or database) name for [base] that belongs to the selected person. */
+    fun nameFor(context: Context, base: String): String {
+        val key = personKey() ?: return base
+        val meta = context.applicationContext.getSharedPreferences(META, Context.MODE_PRIVATE)
+        val owner = meta.getString(LEGACY_OWNER, null)
+            ?: key.also { meta.edit().putString(LEGACY_OWNER, it).commit() }
+        return if (owner == key) base else "${base}_$key"
+    }
+}

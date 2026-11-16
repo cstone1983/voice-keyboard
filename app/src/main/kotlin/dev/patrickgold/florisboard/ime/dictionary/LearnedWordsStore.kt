@@ -77,10 +77,34 @@ object LearnedWordsStore {
     private val snapshots = guardedByLock { mutableMapOf<String, LearnedSnapshot>() }
     private val bigramCache = guardedByLock { mutableMapOf<String, Map<String, Int>>() }
 
-    private fun db(context: Context): LearnedWordsDatabase =
-        instance ?: synchronized(this) {
-            instance ?: LearnedWordsDatabase.new(context.applicationContext).also { instance = it }
+    @Volatile
+    private var instanceName: String? = null
+
+    /** Bumped when the person (and so the database) changes; the caches compare it under their locks. */
+    @Volatile
+    private var dbGeneration = 0
+    private var snapshotGeneration = 0
+    private var bigramGeneration = 0
+
+    /**
+     * The selected person's database (Voice Keyboard: one per person, see
+     * [dev.patrickgold.florisboard.vk.learning.VkPersonFiles]). Switching person closes the old one and
+     * drops every cache, so the next keystroke reads the new person's words.
+     */
+    private fun db(context: Context): LearnedWordsDatabase {
+        val name = dev.patrickgold.florisboard.vk.learning.VkPersonFiles.nameFor(context, LearnedWordsDatabase.DB_FILE_NAME)
+        instance?.takeIf { instanceName == name }?.let { return it }
+        return synchronized(this) {
+            instance?.takeIf { instanceName == name } ?: run {
+                instance?.close()
+                LearnedWordsDatabase.new(context.applicationContext, name).also {
+                    instance = it
+                    instanceName = name
+                    dbGeneration++
+                }
+            }
         }
+    }
 
     private fun nowSeconds(): Long = System.currentTimeMillis() / 1000L
 
@@ -141,7 +165,9 @@ object LearnedWordsStore {
     /** The decayed, sorted view of [lang]'s learned words. Cached; cheap to call per keystroke. */
     suspend fun snapshot(context: Context, lang: String): LearnedSnapshot {
         ensureFolded(context)
+        db(context)
         return snapshots.withLock { cache ->
+            if (snapshotGeneration != dbGeneration) { cache.clear(); snapshotGeneration = dbGeneration }
             cache.getOrPut(lang) {
                 LearnedSnapshot.of(lang, db(context).dao().wordsFor(lang), nowSeconds())
             }
@@ -154,7 +180,9 @@ object LearnedWordsStore {
      */
     suspend fun bigrams(context: Context, lang: String): Map<String, Int> {
         ensureFolded(context)
+        db(context)
         return bigramCache.withLock { cache ->
+            if (bigramGeneration != dbGeneration) { cache.clear(); bigramGeneration = dbGeneration }
             cache.getOrPut(lang) {
                 db(context).dao().bigramsFor(lang).associate { "${it.prev} ${it.word}" to it.count }
             }
@@ -189,6 +217,28 @@ object LearnedWordsStore {
     /** Marks [id] as living in the personal dictionary from now on (or no longer). */
     suspend fun setPromoted(context: Context, id: Long, promoted: Boolean, lang: String) {
         db(context).dao().setPromoted(id, promoted)
+        invalidate(lang)
+    }
+
+    // ── Voice Keyboard: profile sync with the user's own server ─────────────────────────────────────
+
+    /**
+     * Adds a word learned on another device. Only when this device does not hold it yet (then its own
+     * count is the better one); a promoted word is added unpromoted, since this device's personal
+     * dictionary gets the word through the sync separately.
+     */
+    suspend fun importWord(context: Context, word: String, key: String, lang: String, count: Int, lastUsed: Long) {
+        val dao = db(context).dao()
+        if (dao.findWordByKey(lang, key) != null) return
+        dao.insertWord(LearnedWordEntry(word = word, key = key, lang = lang, count = count.coerceIn(1, 1000), lastUsed = lastUsed))
+        invalidate(lang)
+    }
+
+    /** Adds a word pair learned on another device, when this one does not hold it yet. */
+    suspend fun importBigram(context: Context, prev: String, word: String, lang: String, count: Int, lastUsed: Long) {
+        val dao = db(context).dao()
+        if (dao.findBigram(lang, prev, word) != null) return
+        dao.insertBigram(LearnedBigramEntry(prev = prev, word = word, lang = lang, count = count.coerceIn(1, 1000), lastUsed = lastUsed))
         invalidate(lang)
     }
 

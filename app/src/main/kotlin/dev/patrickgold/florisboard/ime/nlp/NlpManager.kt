@@ -670,6 +670,23 @@ class NlpManager(context: Context) {
         }
     }
 
+    /**
+     * Voice Keyboard: learns the word pairs of a dictated [text] for next-word prediction, the same as
+     * pairs typed one word after another. Only within a sentence (a mark between two words breaks the
+     * pair). Not in incognito fields.
+     */
+    fun learnWordPairsFromText(text: String) {
+        if (text.isBlank() || !prefs.wordLearningIsOn) return
+        if (keyboardManager.activeState.isIncognitoMode || !wordSuggestionsWanted()) return
+        val subtype = subtypeManager.activeSubtype
+        val pairs = dictatedWordPairs(text)
+        if (pairs.isEmpty()) return
+        scope.launch {
+            val provider = getSuggestionProvider(subtype) as? LearningProvider ?: return@launch
+            for ((prev, word) in pairs) provider.learnWordPair(subtype, prev, word)
+        }
+    }
+
     /** Records that [word] followed [previousWord], for the personal half of next-word prediction. */
     fun learnWordPair(previousWord: String, word: String) {
         if (previousWord.isBlank() || word.isBlank() || !prefs.wordLearningIsOn) return
@@ -991,4 +1008,24 @@ class NlpManager(context: Context) {
                     && !blankStrRegex.matches(currentItem.text)
             }
     }
+}
+
+/** Voice Keyboard: adjacent word pairs inside each sentence or clause of [text], at most 60. */
+internal fun dictatedWordPairs(text: String): List<Pair<String, String>> {
+    val out = ArrayList<Pair<String, String>>()
+    for (part in text.split(Regex("[.,;:!?()\\[\\]\"\n]+"))) {
+        var prev: String? = null
+        for (token in part.split(Regex("\\s+"))) {
+            val w = token.trim('\'', '’', '-')
+            // Anything that is not a word (a number, an address) breaks the pair rather than joining
+            // the words either side of it.
+            if (w.isEmpty() || !w.all { it.isLetter() || it == '\'' || it == '’' || it == '-' }) { prev = null; continue }
+            if (prev != null) {
+                out.add(prev to w)
+                if (out.size >= 60) return out
+            }
+            prev = w
+        }
+    }
+    return out
 }

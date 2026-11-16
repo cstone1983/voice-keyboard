@@ -20,6 +20,12 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import dev.patrickgold.florisboard.app.FlorisPreferenceStore
 import dev.patrickgold.florisboard.app.LocalNavController
 import dev.patrickgold.florisboard.app.Routes
@@ -52,6 +58,10 @@ fun VkHubScreen() = FlorisScreen {
         val providerId by prefs.dictate.transcriptionProviderId.collectAsState()
         val accounts by prefs.dictate.providerAccounts.collectAsState()
         val signedIn by prefs.dictate.vkSignedInUser.collectAsState()
+        val personalModel by prefs.dictate.vkPersonalSttModel.collectAsState()
+        val context = LocalContext.current
+        val syncScope = rememberCoroutineScope()
+        var syncStatus by remember { mutableStateOf("Brings your profile down and sends this phone's changes up") }
         val active = accounts[providerId]?.takeIf { it.isCustom }
 
         PreferenceGroup(title = "Your AI server") {
@@ -104,6 +114,39 @@ fun VkHubScreen() = FlorisScreen {
                 prefs.dictate.vkLearnVoice,
                 title = "Help it learn my voice",
                 summary = "Dictation audio is kept on your server (up to a year) to train recognition on your voice",
+                iconSpaceReserved = true,
+            )
+            SwitchPreference(
+                prefs.dictate.vkProfileSync,
+                title = "Keep my keyboard profile on my server",
+                summary = "Your words, touch habits and typing settings follow you to any phone or tablet",
+                iconSpaceReserved = true,
+            )
+            Preference(
+                title = "Sync my profile now",
+                summary = syncStatus,
+                iconSpaceReserved = true,
+                enabledIf = { prefs.dictate.vkProfileSync isEqualTo true },
+                onClick = {
+                    syncStatus = "Syncing…"
+                    syncScope.launch {
+                        val r = dev.patrickgold.florisboard.vk.learning.VkPersonSync.syncNow(context.applicationContext)
+                        syncStatus = when (r) {
+                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.OK -> "Synced"
+                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.NO_SERVER -> "Connect your own server first"
+                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.NO_PERSON -> "Choose who is using the keyboard first"
+                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.NO_ENDPOINT -> "Your server does not support this yet"
+                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.OFF -> "Profile sync is off"
+                            dev.patrickgold.florisboard.vk.learning.VkPersonSync.Result.FAILED -> "Could not reach the server"
+                        }
+                    }
+                },
+            )
+            SwitchPreference(
+                prefs.dictate.vkUsePersonalModel,
+                title = "Use my own voice model",
+                summary = personalModel.substringAfter('|', "").takeIf { it.isNotBlank() }
+                    ?.let { "Ready: $it" } ?: "Used once your server has trained one for you",
                 iconSpaceReserved = true,
             )
             Preference(
@@ -161,6 +204,12 @@ fun VkHubScreen() = FlorisScreen {
                 enabledIf = { prefs.keyboard.vkSplitTouchCorrection isEqualTo true },
             )
             SwitchPreference(
+                prefs.keyboard.vkTouchHabits,
+                title = "Learn my touch habits",
+                summary = "Learns where your thumbs land on each key and reads touches the way you aim",
+                iconSpaceReserved = true,
+            )
+            SwitchPreference(
                 prefs.keyboard.vkGlideWhenSplit,
                 title = "Swipe typing on the split keyboard",
                 summary = "Off by default: quick taps were read as swipes",
@@ -179,6 +228,12 @@ fun VkHubScreen() = FlorisScreen {
                 icon = Icons.Default.Mic,
                 title = "Insert only the final text",
                 summary = "Keep dictated text out of the field until transcription and cleanup are done",
+            )
+            SwitchPreference(
+                prefs.dictate.vkVocabularyHint,
+                title = "Spell my names and words",
+                summary = "Sends your most-used names and terms with each dictation so they are spelled your way",
+                iconSpaceReserved = true,
             )
             Preference(
                 icon = Icons.Default.Timer,

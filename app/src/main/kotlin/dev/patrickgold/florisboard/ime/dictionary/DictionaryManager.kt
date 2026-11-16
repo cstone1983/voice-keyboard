@@ -50,6 +50,9 @@ class DictionaryManager private constructor(context: Context) {
      */
     private val vocabularyVersion = AtomicInteger(0)
 
+    /** Voice Keyboard: the file the open personal dictionary was opened from (one per person). */
+    private var florisDbName: String? = null
+
     /** Changes whenever the words either user dictionary holds may have changed; see [vocabularyVersion]. */
     val userVocabularyVersion: Int
         get() = vocabularyVersion.get()
@@ -232,11 +235,20 @@ class DictionaryManager private constructor(context: Context) {
     fun loadUserDictionariesIfNecessary() {
         val context = applicationContext.get() ?: return
 
+        // Voice Keyboard: one personal dictionary per selected person (see VkPersonFiles).
+        val personDbName = dev.patrickgold.florisboard.vk.learning.VkPersonFiles
+            .nameFor(context, FlorisUserDictionaryDatabase.DB_FILE_NAME)
+        if (florisUserDictionaryDatabase != null && florisDbName != personDbName) {
+            florisUserDictionaryDatabase?.invalidationTracker?.removeObserver(florisDictionaryObserver)
+            florisUserDictionaryDatabase?.close()
+            florisUserDictionaryDatabase = null
+        }
         if (florisUserDictionaryDatabase == null && prefs.dictionary.enableFlorisUserDictionary.get()) {
+            florisDbName = personDbName
             florisUserDictionaryDatabase = Room.databaseBuilder(
                 context,
                 FlorisUserDictionaryDatabase::class.java,
-                FlorisUserDictionaryDatabase.DB_FILE_NAME
+                personDbName,
             ).allowMainThreadQueries().build().also {
                 it.invalidationTracker.addObserver(florisDictionaryObserver)
             }

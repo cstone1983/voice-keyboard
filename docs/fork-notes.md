@@ -190,6 +190,34 @@ Settings → Voice Keyboard → Learning → Voice training (`VkTrainingScreen`,
   "Forget everything" also clears the person's counts.
 - Possible later: a server `GET vk/words` to seed counts from past dictations/messages (server chat).
 
+## Per-person personalization (2026-11-16)
+
+Everything the keyboard learns on the phone now belongs to the selected person, and can follow them
+to other devices through their own server. Server contract: `docs/server-personalization.md`.
+
+1. **Per-person files** (`vk/learning/VkPersonFiles.kt`): learned words and word pairs
+   (`dictate_learned_words`), the personal dictionary (`floris_user_dictionary`), word counts and touch
+   habits each have one file per person (hashed id). The first person chosen on a phone keeps the files
+   from before, so nothing is lost. Switching person reopens them.
+2. **Spelling hint for speech-to-text** (`VkVocabularyHint.kt`): up to 20 of the person's own words (learned
+   words + personal dictionary, most used first, ≤180 chars) go at the start of the transcription prompt.
+   Built in the background when recording starts. Switch: "Spell my names and words".
+3. **Next-word predictions from dictation**: dictated text feeds the same learned word pairs as typing
+   (`NlpManager.learnWordPairsFromText`, within clauses, numbers break a pair).
+4. **Touch habits per key** (`ime/nlp/latin/TouchHabits.kt`): mean landing offset per letter, split and
+   normal keyboard apart, from finished words (as typed, or the autocorrected word when the lengths match).
+   Used after 8 samples, capped at 0.35/0.30 key widths, last ~60 samples. A touch goes to the key whose
+   learned aim point is nearest. Switch: "Learn my touch habits".
+5. **Profile sync** (`VkPersonSync.kt`): `GET`/`POST vk/personal` every 6 h at keyboard start, right after a
+   person switch, or with "Sync my profile now". Merge keeps the larger value (never adds). Settings come
+   from the server on a person's first sync on a device, then go up from the device. 404 = no endpoint
+   (retry after a day).
+6. **Own voice model**: `vk/me` `stt_model` is stored per person and used as the transcription model on
+   the own server. Switch: "Use my own voice model".
+
+Also: a spoken "comma" next to a comma that is already there no longer gives ",," (`VkCleanup`).
+"Forget everything" also clears the person's counts, touch habits and sync state on the phone.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

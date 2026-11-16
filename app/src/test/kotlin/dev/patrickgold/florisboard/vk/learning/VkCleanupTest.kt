@@ -52,4 +52,15 @@ class VkCleanupTest {
             VkCleanup.spokenPunctuation("Open voice.example.com comma e.g. on Node.js today full stop"),
         )
     }
+
+    @Test
+    fun `spoken comma never doubles a comma that is already there`() {
+        assertEquals("Hi, there", VkCleanup.spokenPunctuation("Hi, comma there"))
+        assertEquals("Hi, there", VkCleanup.spokenPunctuation("Hi, comma, there"))
+        assertEquals("Hi, there", VkCleanup.spokenPunctuation("Hi comma, there"))
+        assertEquals("Hi, there", VkCleanup.spokenPunctuation("Hi comma , there"))
+        assertEquals("Done. Next", VkCleanup.spokenPunctuation("Done. comma Next"))
+        assertEquals("Done.", VkCleanup.spokenPunctuation("Done, period"))
+        assertEquals("Okay? Yes", VkCleanup.spokenPunctuation("Okay, question mark yes"))
+    }
 }

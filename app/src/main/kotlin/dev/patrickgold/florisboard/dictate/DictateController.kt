@@ -1626,6 +1626,8 @@ object DictateController {
         // a screen reader has to speak (#159), and the observer only hears what happens once it runs.
         ensureHapticObserver(appContext)
         if (refuseIfNoCredential(context)) return
+        // Voice Keyboard: the person's own words for the speech-to-text hint, ready before the first upload.
+        scope.launch(Dispatchers.IO) { runCatching { dev.patrickgold.florisboard.vk.learning.VkVocabularyHint.refresh(appContext) } }
         // Voice Keyboard: an English-only model (".en") cannot transcribe another language; say so now
         // instead of recording something that can only come back wrong.
         run {
@@ -5396,6 +5398,10 @@ object DictateController {
         val chosen = account.transcriptionModel.takeIf { it.isNotBlank() }
             ?: preset.defaultTranscriptionModel
             ?: fallback
+        // Voice Keyboard: on the user's own server, the person's own fine-tuned model once it is ready.
+        if (account.isCustom && account.customBaseUrl.isNotBlank() && preset.transcriptionApi != TranscriptionApi.LOCAL_ONDEVICE) {
+            return dev.patrickgold.florisboard.vk.learning.VkLearning.personalSttModel(chosen)
+        }
         if (preset.transcriptionApi != TranscriptionApi.LOCAL_ONDEVICE) return chosen
         if (chosen.isNotBlank() && LocalModelManager.isInstalled(context, chosen)) return chosen
         return account.realtimeModel.takeIf {

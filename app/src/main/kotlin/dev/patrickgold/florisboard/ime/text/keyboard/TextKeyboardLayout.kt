@@ -145,6 +145,7 @@ fun TextKeyboardLayout(
             // Feed key geometry to the autocorrect proximity model regardless of glide (which is off for
             // many users); the glide classifier still only gets it when glide is enabled.
             KeyProximityInfo.update(keys)
+            dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.attach(context)
             if (glideEnabled) {
                 glideTypingManager.setLayout(keys)
             }

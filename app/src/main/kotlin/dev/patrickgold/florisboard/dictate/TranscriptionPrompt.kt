@@ -48,7 +48,11 @@ fun transcriptionStylePrompt(
 ): String? = DictatePromptDefaults.appendCustomWords(transcriptionStyleBasePrompt(prefs, language), prefs.dictate.customWords.get())
     .let { base ->
         // Voice Keyboard: the learned vocabulary prompt from the user's server, ahead of the style prompt.
-        val learned = dev.patrickgold.florisboard.vk.learning.VkLearning.profile()?.whisperPrompt?.trim().orEmpty()
+        val learned = listOf(
+            dev.patrickgold.florisboard.vk.learning.VkLearning.profile()?.whisperPrompt?.trim().orEmpty(),
+            // The person's own words from this phone (names, terms), most used first.
+            dev.patrickgold.florisboard.vk.learning.VkVocabularyHint.hint(),
+        ).filter { it.isNotEmpty() }.joinToString(" ")
         when {
             learned.isEmpty() -> base
             base.isNullOrBlank() -> learned

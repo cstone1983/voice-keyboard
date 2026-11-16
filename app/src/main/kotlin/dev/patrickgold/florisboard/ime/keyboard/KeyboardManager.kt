@@ -699,6 +699,12 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         // Read before the commit — afterwards the editor holds the corrected word and the typed one is
         // gone for good.
         val replaced = editorInstance.textCompletionWouldReplace()
+        if (!activeState.isIncognitoMode) {
+            // Voice Keyboard: the taps of the typed word were aimed at the letters of the correction.
+            dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.learnWord(
+                candidate.text.toString(), editorInstance.activeContent.composingText,
+            )
+        }
         commitCandidate(candidate, byUser = false)
         val inserted = candidate.text.toString()
         nlpManager.countWordUse(inserted)
@@ -764,6 +770,11 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
             return
         }
         val wasTyped = TouchTrace.wasFullyTyped(word)
+        if (wasTyped && !activeState.isIncognitoMode && word.length >= 3) {
+            // Voice Keyboard: a word left as typed was aimed at its own letters.
+            dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.learnWord(word, word)
+            scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.saveIfDue() }
+        }
         val textBefore = content.textBeforeSelection.removeSuffix(word)
         nlpManager.learnFinishedWord(
             word = word,

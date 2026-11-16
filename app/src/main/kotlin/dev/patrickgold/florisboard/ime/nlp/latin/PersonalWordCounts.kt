@@ -91,6 +91,33 @@ class PersonalWordCounts(private val dir: File?) {
             .toList()
     }
 
+    /** Every word with its (undecayed) score and last use, for the profile sync. */
+    @Synchronized
+    fun export(): Map<String, Pair<Double, Long>> = words.mapValues { (_, e) -> e.score to e.lastUsed }
+
+    /**
+     * Merges counts from another device: per word the larger of the two decayed scores, with the later
+     * last use. Never adds: the same use may already be counted on both.
+     */
+    @Synchronized
+    fun merge(remote: Map<String, Pair<Double, Long>>, nowSec: Long = System.currentTimeMillis() / 1000L) {
+        for ((w, v) in remote) {
+            val word = w.lowercase()
+            if (word.length < MIN_LENGTH || word.length > MAX_LENGTH || !v.first.isFinite() || v.first <= 0) continue
+            val theirs = decayed(v.first, v.second, nowSec)
+            val e = words[word]
+            if (e == null) {
+                words[word] = Entry(v.first, v.second)
+            } else {
+                val mine = decayed(e.score, e.lastUsed, nowSec)
+                if (theirs > mine) { e.score = theirs; e.lastUsed = nowSec }
+            }
+            dirty++
+        }
+        if (words.size > MAX_WORDS) prune(nowSec)
+        flush(nowSec)
+    }
+
     @Synchronized
     fun clear() {
         words = HashMap()

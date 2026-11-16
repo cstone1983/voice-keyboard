@@ -74,7 +74,7 @@ object VkCleanup {
         // trial period of two weeks" stays as it is.
         Regex("""\s*,?\s*\bperiod\b[.,]?(?=\s*$|\s*\n|\s+[A-Z])""") to ".",
         Regex("""\s*,?\s*\bPeriod\b[.,]?(?=\s*$|\s*\n)""") to ".",
-        Regex("""\s*\b(comma)\b[,.]?""", RegexOption.IGNORE_CASE) to ",",
+        Regex("""\s*,?\s*\b(comma)\b[,.]?""", RegexOption.IGNORE_CASE) to ",",
     )
 
     /** "comma", "period", "question mark", "new line" … said aloud become the marks themselves. */
@@ -83,6 +83,12 @@ object VkCleanup {
         // below touch only those — never "voice.example.com", "e.g." or "Node.js" that were already there.
         var out = text
         for ((re, mark) in SPOKEN) out = re.replace(out, Regex.escapeReplacement(mark + MARK))
+        // A mark that was already there next to the one just inserted ("Hi, comma, there", or a cleanup
+        // that kept both the word and the mark) must not double it: keep one.
+        out = out.replace(Regex("""[,;:]\s*([,.?!\n])$MARK"""), "$1$MARK")
+        out = out.replace(Regex("""([.?!])\s*,$MARK"""), "$1")
+        out = out.replace(Regex("""([,.?!])$MARK\s*\1(?!\1)"""), "$1$MARK")
+        out = out.replace(Regex(""",$MARK\s*([.?!])"""), "$1")
         // An inserted mark directly followed by a letter gets its space ("hi,there" -> "hi, there").
         out = out.replace(Regex("""([,.?!])$MARK(?=\p{L})"""), "$1 ")
         // A capital after an inserted sentence end or line break.

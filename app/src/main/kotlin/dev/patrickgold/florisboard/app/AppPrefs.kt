@@ -768,6 +768,14 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         val vkActingUser = string(key = "vk__acting_user", default = "")
         // Suggestions favour the words the current person uses most (counted on the device, per person).
         val vkPersonalWordRanking = boolean(key = "vk__personal_word_ranking", default = true)
+        // Send the person's own words (names, terms) to speech-to-text as a spelling hint.
+        val vkVocabularyHint = boolean(key = "vk__vocabulary_hint", default = true)
+        // Keep the person's keyboard profile (words, touch habits, typing settings) on their own server.
+        val vkProfileSync = boolean(key = "vk__profile_sync", default = true)
+        // Use the person's own speech-to-text model when the server reports one ready (GET vk/me).
+        val vkUsePersonalModel = boolean(key = "vk__use_personal_model", default = true)
+        // "<person id>|<model>" from GET vk/me; empty when the server has none for that person.
+        val vkPersonalSttModel = string(key = "vk__personal_stt_model", default = "")
         // One-time switch of existing installs to the Gboard-like defaults (prompt chips in a panel, no
         // number row). See DictateLegacyMigrator.applyVkLayoutDefaultsIfNeeded.
         val vkLayoutDefaultsApplied = boolean(key = "vk__layout_defaults_applied_v1", default = false)
@@ -1581,6 +1589,8 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         val vkSplitTouchLiftRightPercent = int(key = "vk__split_touch_lift_right_percent_v2", default = 20)
         // Swipe typing on a split keyboard (quick taps were read as swipes in the typing test).
         val vkGlideWhenSplit = boolean(key = "vk__glide_when_split", default = false)
+        // Voice Keyboard: learn where this person's thumbs land on each key and pick keys accordingly.
+        val vkTouchHabits = boolean(key = "vk__touch_habits", default = true)
         val numberRow = boolean(
             key = "keyboard__number_row",
             default = false,

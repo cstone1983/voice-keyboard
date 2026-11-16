@@ -325,7 +325,7 @@ fun VkLearningScreen() = FlorisScreen {
             AlertDialog(
                 onDismissRequest = { confirmForget = false },
                 title = { Text("Forget everything?") },
-                text = { Text("Deletes all learned words, rules, corrections, dictations, styles, stored messages and voice clips on your server, and this person's word counts on this phone. This cannot be undone.") },
+                text = { Text("Deletes all learned words, rules, corrections, dictations, styles, stored messages and voice clips on your server, and this person's word counts and touch habits on this phone. This cannot be undone.") },
                 confirmButton = {
                     TextButton(onClick = {
                         confirmForget = false
@@ -336,6 +336,8 @@ fun VkLearningScreen() = FlorisScreen {
                                 VkLearning.clearLocal()
                                 withContext(Dispatchers.IO) {
                                     dev.patrickgold.florisboard.ime.nlp.latin.PersonalWords.current(context, prefs).clear()
+                                    dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.clear()
+                                    dev.patrickgold.florisboard.vk.learning.VkPersonSync.forgetLocalState(context)
                                 }
                                 items = emptyList()
                             }

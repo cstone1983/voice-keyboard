@@ -90,6 +90,10 @@ object KeyProximityInfo {
         }
 
         /** Index of the key for [char], or -1 — tries the exact code first, then the lowercase one. */
+        /** Centre of the key at [index], in key-width units. */
+        fun xAt(index: Int): Float = xs[index]
+        fun yAt(index: Int): Float = ys[index]
+
         fun indexOf(char: Char): Int {
             val code = char.code
             for (i in codes.indices) if (codes[i] == code) return i

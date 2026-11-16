@@ -378,8 +378,8 @@ abstract class LearnedWordsDatabase : RoomDatabase() {
             }
         }
 
-        fun new(context: Context): LearnedWordsDatabase =
-            Room.databaseBuilder(context, LearnedWordsDatabase::class.java, DB_FILE_NAME)
+        fun new(context: Context, name: String = DB_FILE_NAME): LearnedWordsDatabase =
+            Room.databaseBuilder(context, LearnedWordsDatabase::class.java, name)
                 .addMigrations(MIGRATION_1_2)
                 // Only reachable if no migration path exists at all. Losing a learned vocabulary is bad;
                 // an input method that crash-loops on open is worse, and the user could not even switch

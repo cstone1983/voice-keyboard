@@ -10,6 +10,7 @@
 
 package dev.patrickgold.florisboard.vk.learning
 
+import dev.patrickgold.florisboard.nlpManager
 import android.text.InputType
 import android.util.Log
 import android.view.inputmethod.EditorInfo
@@ -175,6 +176,8 @@ object VkLearning {
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             dev.patrickgold.florisboard.ime.nlp.latin.PersonalWords.current(ctx, prefs).count(text)
         }
+        // …and its word pairs, for next-word prediction.
+        runCatching<Unit> { ctx.nlpManager().value.learnWordPairsFromText(text) }
     }
 
     fun isPrivateField(info: EditorInfo?): Boolean {
@@ -564,6 +567,7 @@ object VkLearning {
             if (prefs.dictate.vkProfileCache.get() != "{}") prefs.dictate.vkProfileCache.set("{}")
         }
         flush()
+        appContext?.let { VkPersonSync.syncIfDue(it) }
         // With learning off nothing is fetched: the request would tell the server which apps are used.
         if (!enabled()) return
         scope.launch {
@@ -673,6 +677,9 @@ object VkLearning {
             val device = (obj["device"] as? JsonPrimitive)?.contentOrNull.orEmpty()
             prefsModel.dictate.vkSignedInUser.set(name)
             prefsModel.dictate.vkSignedInDevice.set(device)
+            // The person's own speech-to-text model, once the server has trained one (absent or "" = none).
+            val sttModel = (obj["stt_model"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            prefsModel.dictate.vkPersonalSttModel.set(if (sttModel.isEmpty() || user.isEmpty()) "" else "$user|$sttModel")
             name.takeIf { it.isNotBlank() }
         }.onFailure { e ->
             if (VkIdentity.needsSelection(e)) VkIdentity.select(prefsModel, null)
@@ -689,6 +696,18 @@ object VkLearning {
         prefs.dictate.vkLearningQueue.set("[]")
         tracked = null
         deleteLocalClips()
+    }
+
+    /**
+     * The person's own speech-to-text model to use instead of [chosen], when the server reported one for
+     * the person selected now and the switch is on; [chosen] otherwise.
+     */
+    fun personalSttModel(chosen: String): String {
+        if (!prefs.dictate.vkUsePersonalModel.get()) return chosen
+        val who = VkIdentity.currentUser(prefs) ?: return chosen
+        val stored = prefs.dictate.vkPersonalSttModel.get()
+        val model = stored.substringAfter('|', "")
+        return if (stored.substringBefore('|') == who && model.isNotBlank()) model else chosen
     }
 
     /** Voice clips waiting on this phone for upload. */

@@ -51,6 +51,46 @@ class TextKeyboard(
      * evidence, so it reasons from the same point that chose the key.
      */
     fun vkCorrectedPoint(pointerX: Float, pointerY: Float): Pair<Float, Float> {
+        val (x, y) = vkSplitCorrectedPoint(pointerX, pointerY)
+        return vkHabitPoint(x, y)
+    }
+
+    /**
+     * Voice Keyboard: the key this person's touch was aimed at, from where their touches usually land on
+     * each key ([dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits]). Returns a point inside that key
+     * when it differs from the key hit; the point unchanged otherwise.
+     */
+    private fun vkHabitPoint(x: Float, y: Float): Pair<Float, Float> {
+        val unchanged = x to y
+        dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.lastSplit = isVkSplit
+        if (!dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.enabled()) return unchanged
+        val raw = rawKeyForPos(x, y) ?: return unchanged
+        if (!raw.isVkLetterKey()) return unchanged
+        val w = raw.visibleBounds.width
+        if (w <= 0f) return unchanged
+        val near = ArrayList<TextKey>(8)
+        for (key in keys()) {
+            if (!key.isVkLetterKey()) continue
+            val c = key.visibleBounds.center
+            if (abs(c.x - x) <= 1.6f * w && abs(c.y - y) <= 1.6f * w) near.add(key)
+        }
+        val hit = near.indexOf(raw)
+        if (near.size < 2 || hit < 0) return unchanged
+        val chars = CharArray(near.size) { near[it].computedData.code.toChar() }
+        val centers = FloatArray(near.size * 2)
+        for (i in near.indices) {
+            val c = near[i].visibleBounds.center
+            centers[i * 2] = c.x / w
+            centers[i * 2 + 1] = c.y / w
+        }
+        val pick = dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.current()
+            .pick(x / w, y / w, chars, centers, hit, isVkSplit)
+        if (pick < 0) return unchanged
+        val b = near[pick].touchBounds
+        return x.coerceIn(b.left + 1f, b.right - 1f) to y.coerceIn(b.top + 1f, b.bottom - 1f)
+    }
+
+    private fun vkSplitCorrectedPoint(pointerX: Float, pointerY: Float): Pair<Float, Float> {
         val unchanged = pointerX to pointerY
         val g = vkSplitGeometry ?: return unchanged
         val raw = rawKeyForPos(pointerX, pointerY)
