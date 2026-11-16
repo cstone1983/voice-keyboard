@@ -552,6 +552,7 @@ class NlpManager(context: Context) {
         weight: Int = 1,
         trustedByUser: Boolean = false,
     ) {
+        countWordUse(word)
         if (word.isBlank() || !prefs.wordLearningIsOn) return
         val subtype = subtypeManager.activeSubtype
         val isPrivate = keyboardManager.activeState.isIncognitoMode || !wordSuggestionsWanted()
@@ -654,6 +655,19 @@ class NlpManager(context: Context) {
     /** Tells the active provider its cached copy of the personal dictionary is stale. */
     private suspend fun notePersonalVocabularyChanged(subtype: Subtype) {
         (getSuggestionProvider(subtype) as? LearningProvider)?.onPersonalVocabularyChanged()
+    }
+
+    /**
+     * Voice Keyboard: counts a finished word for the current person's most-used words (see
+     * [dev.patrickgold.florisboard.ime.nlp.latin.PersonalWordCounts]). Not in incognito fields, nor when
+     * suggestions are off (password fields and the like).
+     */
+    fun countWordUse(text: String) {
+        if (text.isBlank() || !prefs.dictate.vkPersonalWordRanking.get()) return
+        if (keyboardManager.activeState.isIncognitoMode || !wordSuggestionsWanted()) return
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            dev.patrickgold.florisboard.ime.nlp.latin.PersonalWords.current(appContext, prefs).count(text)
+        }
     }
 
     /** Records that [word] followed [previousWord], for the personal half of next-word prediction. */

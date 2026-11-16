@@ -701,6 +701,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         val replaced = editorInstance.textCompletionWouldReplace()
         commitCandidate(candidate, byUser = false)
         val inserted = candidate.text.toString()
+        nlpManager.countWordUse(inserted)
         pendingAutoCorrection = if (replaced.isNotEmpty() && replaced != inserted) {
             AutoCorrection(inserted = inserted, replaced = replaced)
         } else {
@@ -806,6 +807,8 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         // would also contradict the rule one screen up, where a word that *was* auto-corrected is
         // deliberately not offered for learning — the same event must not walk in through the other door.
         if (byUser && candidate is WordSuggestionCandidate) {
+            // Voice Keyboard: any word picked from the strip counts toward the person's most-used words.
+            nlpManager.countWordUse(candidate.text.toString())
             if (candidate.isLearned) {
                 nlpManager.learnPickedWord(candidate.text.toString())
             }

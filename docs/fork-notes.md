@@ -177,6 +177,19 @@ Settings → Voice Keyboard → Learning → Voice training (`VkTrainingScreen`,
     cleartext stays enabled in the manifest for those. SecretBox fails closed (key not stored if the
     Keystore fails). `/v1/models` `task: automatic-speech-recognition` marks speech models.
 
+## Suggestions favour the person's most-used words (2026-11-16)
+
+- `ime/nlp/latin/PersonalWordCounts.kt`: counts every finished word (typed, picked from the strip,
+  auto-corrected to, dictated) per selected person, in `files/vk_learning/words_<hash>.json` (device only,
+  outside backup; the file name is a hash, not the person's id). 30-day half-life; at most ~6000 words.
+- Not counted in incognito/private fields or where suggestions are off.
+- Ranking: a word used 3+ times earns a strip rank of 196 + 12·ln(uses), 209–250. It is lifted only when
+  that beats its dictionary rank, and only for words the dictionary or personal dictionary knows (a slip
+  typed often never becomes a suggestion). At most 3 lifted per strip; never auto-committed by this.
+- Switch: Voice Keyboard → Typing & autocorrect → "Suggest my most-used words first" (on).
+  "Forget everything" also clears the person's counts.
+- Possible later: a server `GET vk/words` to seed counts from past dictations/messages (server chat).
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

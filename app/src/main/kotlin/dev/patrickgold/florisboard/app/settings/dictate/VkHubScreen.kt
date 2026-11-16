@@ -121,6 +121,12 @@ fun VkHubScreen() = FlorisScreen {
                 title = "Autocorrect",
                 summary = "Fix mistyped words as you type",
             )
+            SwitchPreference(
+                prefs.dictate.vkPersonalWordRanking,
+                title = "Suggest my most-used words first",
+                summary = "Counts the words you type and dictate, on this phone, for each person",
+                iconSpaceReserved = true,
+            )
             ListPreference(
                 prefs.correction.autoCorrectStrength,
                 title = "Autocorrect strength",

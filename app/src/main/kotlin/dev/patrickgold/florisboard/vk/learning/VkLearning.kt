@@ -164,6 +164,19 @@ object VkLearning {
         prefs.dictate.vkLearningExcludedApps.get().lines().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
     /** True when this field must never be read for learning. */
+    /**
+     * Dictated words count toward the person's most-used words in the suggestion strip, like typed ones
+     * (on the device only; independent of the server learning switch). Never in private fields.
+     */
+    private fun countWordsForSuggestions(text: String) {
+        val ctx = appContext ?: return
+        if (text.isEmpty() || !prefs.dictate.vkPersonalWordRanking.get()) return
+        if (isPrivateField(FlorisImeService.currentEditorInfo())) return
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            dev.patrickgold.florisboard.ime.nlp.latin.PersonalWords.current(ctx, prefs).count(text)
+        }
+    }
+
     fun isPrivateField(info: EditorInfo?): Boolean {
         if (info == null) return true
         if (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING != 0) return true
@@ -184,6 +197,7 @@ object VkLearning {
     fun onDictationInserted(inserted: String, sttModel: String, cleanupRejected: Boolean = false) {
         val text = inserted.trim()
         val record = takeRecord(text, cleanupRejected)
+        countWordsForSuggestions(text)
         if (!enabled() || text.isEmpty()) { record.clip?.delete(); return }
         val info = FlorisImeService.currentEditorInfo()
         if (isPrivateField(info)) { record.clip?.delete(); return }

@@ -189,6 +189,9 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
         // the dictionary walk, and a user with a large personal vocabulary should not find the strip made
         // entirely of their own rare words.
         private const val LEARNED_MAX = 3
+        /** Voice Keyboard: how many of the person's most-used words may be lifted in one strip. */
+        private const val FREQUENT_MAX = 3
+        private const val FREQUENT_SCAN = 8
 
         // German umlaut/ß restoration (issue #219): bound the variant generation so a long word with many
         // a/o/u doesn't explode combinatorially (2^sites). Words needing more than this are left alone.
@@ -1906,6 +1909,48 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
             }
         }
 
+        // Voice Keyboard: the words this person uses most, at the rank their use has earned rather than
+        // the language's (see [PersonalWordCounts]). Only words the dictionary or the personal dictionary
+        // knows, so a slip typed often never becomes a suggestion; only when the earned rank is above the
+        // dictionary's own, since otherwise the walk below puts the word where it belongs anyway.
+        val frequent: List<Pair<String, Int>> = if (word.isNotEmpty() && prefs.dictate.vkPersonalWordRanking.get()) {
+            val personalByFold = userVocabulary?.byFold
+            PersonalWords.current(appContext, prefs)
+                .frequentStartingWith(word.lowercase(), FREQUENT_SCAN)
+                .mapNotNull { (w, rank) ->
+                    val key = index.fold(w)
+                    val dictFreq = index.freq[key]
+                    when {
+                        dictFreq != null -> if (rank > dictFreq) index.spell(key, null) to rank else null
+                        personalByFold?.get(key) != null -> personalByFold.getValue(key) to rank
+                        else -> null
+                    }
+                }
+                .take(FREQUENT_MAX)
+        } else {
+            emptyList()
+        }
+        var frequentTaken = 0
+
+        /** Puts the person's frequent words in once the walk has dropped to [freq] or below. */
+        fun addFrequentDownTo(freq: Int) {
+            while (frequentTaken < frequent.size && out.size < completionCap) {
+                val (stored, rank) = frequent[frequentTaken]
+                if (rank < freq) break
+                frequentTaken++
+                val text = cased(stored)
+                out.putIfAbsent(
+                    text.lowercase(),
+                    WordSuggestionCandidate(
+                        text = text,
+                        confidence = rank / 255.0,
+                        sourceProvider = this,
+                        isLearned = isLearnedWord(text),
+                    ),
+                )
+            }
+        }
+
         // A finished address, offered as typed (discussion #445). The typed word only ever reached the strip
         // beside a correction (issues #150, #241), and an address is never corrected (see
         // [isDictionaryJudgeable]) — so it never appeared at all, and there was nothing to long-press to
@@ -2003,6 +2048,7 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
             }
             if (!matches) return true
             val freq = data[dictWord] ?: 0
+            addFrequentDownTo(freq)
             addPersonalDownTo(freq)
             addLearnedDownTo(freq)
             if (out.size >= completionCap) return false
@@ -2031,6 +2077,7 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
         }
         // Nothing (or too little) in the dictionary extends this prefix: the user's own words are all that
         // is left to offer, so they go in rather than being dropped for want of a rank to sit at.
+        addFrequentDownTo(0)
         addPersonalDownTo(0)
         addLearnedDownTo(0)
 

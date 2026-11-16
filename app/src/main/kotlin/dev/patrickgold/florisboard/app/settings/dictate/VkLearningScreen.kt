@@ -325,7 +325,7 @@ fun VkLearningScreen() = FlorisScreen {
             AlertDialog(
                 onDismissRequest = { confirmForget = false },
                 title = { Text("Forget everything?") },
-                text = { Text("Deletes all learned words, rules, corrections, dictations, styles, stored messages and voice clips on your server. This cannot be undone.") },
+                text = { Text("Deletes all learned words, rules, corrections, dictations, styles, stored messages and voice clips on your server, and this person's word counts on this phone. This cannot be undone.") },
                 confirmButton = {
                     TextButton(onClick = {
                         confirmForget = false
@@ -334,6 +334,9 @@ fun VkLearningScreen() = FlorisScreen {
                             val ok = runCatching { withContext(Dispatchers.IO) { a.delete("vk/data") } }.isSuccess
                             if (ok) {
                                 VkLearning.clearLocal()
+                                withContext(Dispatchers.IO) {
+                                    dev.patrickgold.florisboard.ime.nlp.latin.PersonalWords.current(context, prefs).clear()
+                                }
                                 items = emptyList()
                             }
                             Toast.makeText(context, if (ok) "Everything forgotten" else "Could not reach the server", Toast.LENGTH_SHORT).show()
