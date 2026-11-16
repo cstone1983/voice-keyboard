@@ -57,11 +57,11 @@ import kotlinx.serialization.json.put
  */
 object VkPersonSync {
     private const val TAG = "VKSync"
-    private const val MIN_INTERVAL_MS = 6 * 60 * 60 * 1000L
+    private const val MIN_INTERVAL_MS = 15 * 60 * 1000L
     private const val NO_ENDPOINT_RETRY_MS = 24 * 60 * 60 * 1000L
     private const val META = "vk_person_sync"
-    private const val MAX_WORDS_UP = 4000
-    private const val MAX_PAIRS_UP = 5000
+    private const val MAX_WORDS_UP = 6000
+    private const val MAX_PAIRS_UP = 20000
     const val FORMAT_VERSION = 1
 
     private val prefs by FlorisPreferenceStore
@@ -119,6 +119,12 @@ object VkPersonSync {
         scope.launch { syncNow(context) }
     }
 
+    /** Sync now in the background (no throttle), e.g. after settings were changed. */
+    fun syncSoon(context: Context) {
+        if (!enabled() || VkPersonFiles.personKey() == null) return
+        scope.launch { syncNow(context) }
+    }
+
     private val _status = kotlinx.coroutines.flow.MutableStateFlow("")
     /** What the last sync did, for the settings page ("" before the first). */
     val status: kotlinx.coroutines.flow.StateFlow<String> = _status
@@ -160,138 +166,254 @@ object VkPersonSync {
         val who = VkPersonFiles.personKey() ?: return Result.NO_PERSON
         val meta = meta(context)
         try {
-            val remote: JsonObject? = try {
-                json.parseToJsonElement(api.get("vk/personal")).jsonObject
-            } catch (e: VkLearningApi.HttpException) {
-                // No profile yet is an empty 200 ({}); 404 means the server has no such endpoint.
-                if (e.status == 404) {
-                    meta.edit().putLong("no_endpoint_at", System.currentTimeMillis()).apply()
-                    return Result.NO_ENDPOINT
+            // Twice at most: a 409 means another device saved in between; merge again with its copy.
+            for (attempt in 0..1) {
+                val remote: JsonObject = try {
+                    json.parseToJsonElement(api.get("vk/personal")).jsonObject
+                } catch (e: VkLearningApi.HttpException) {
+                    // No profile yet is an empty 200 ({}); 404 means the server has no such endpoint.
+                    if (e.status == 404) {
+                        meta.edit().putLong("no_endpoint_at", System.currentTimeMillis()).apply()
+                        return Result.NO_ENDPOINT
+                    }
+                    throw e
                 }
-                throw e
+                val r = Parsed.of(remote)
+                val local = readLocal(context)
+                val base = readBase(context, who)
+                val now = System.currentTimeMillis() / 1000L
+                val merged = Parsed(
+                    words = ProfileMerge.words(r.words, local.words!!, base?.words, now),
+                    learned = ProfileMerge.counted(r.learned, local.learned!!, base?.learned),
+                    pairs = ProfileMerge.counted(r.pairs, local.pairs!!, base?.pairs),
+                    dictionary = ProfileMerge.dictionary(r.dictionary, local.dictionary!!, base?.dictionary),
+                    settings = ProfileMerge.settings(
+                        r.settings, local.settings!!,
+                        // A person switch, or the first sync of this person here: the server's settings.
+                        if (takeServerSettings) null else base?.settings,
+                    ),
+                    touch = mergedTouch(local.touch, r.touch),
+                )
+                val body = merged.toJson(now).let { obj ->
+                    // The server refuses (409) if the profile changed since this copy was read.
+                    JsonObject(obj + ("if_updated_at" to JsonPrimitive(r.updatedAt)))
+                }
+                try {
+                    api.post("vk/personal", body.toString())
+                } catch (e: VkLearningApi.HttpException) {
+                    if (e.status == 409 && attempt == 0) continue
+                    throw e
+                }
+                applyLocally(context, merged, local)
+                writeBase(context, who, merged, now)
+                meta.edit()
+                    .putLong("last_$who", System.currentTimeMillis())
+                    .putLong("no_endpoint_at", 0L)
+                    .apply()
+                Log.i(TAG, "profile synced")
+                // The personal speech-to-text model may have become ready.
+                runCatching { VkLearning.refreshSignedIn(prefs) }
+                return Result.OK
             }
-            val firstOnThisDevice = !meta.getBoolean("synced_$who", false)
-            if (remote != null && remote.isNotEmpty()) {
-                mergeIn(context, remote, applySettings = takeServerSettings || firstOnThisDevice)
-            }
-            api.post("vk/personal", buildUpload(context).toString())
-            meta.edit()
-                .putLong("last_$who", System.currentTimeMillis())
-                .putBoolean("synced_$who", true)
-                .putLong("no_endpoint_at", 0L)
-                .apply()
-            Log.i(TAG, "profile synced")
-            // The personal speech-to-text model may have become ready.
-            runCatching { VkLearning.refreshSignedIn(prefs) }
-            return Result.OK
+            return Result.FAILED
         } catch (e: Exception) {
             Log.i(TAG, "profile sync failed (${e.javaClass.simpleName})")
             return Result.FAILED
         }
     }
 
-    private suspend fun mergeIn(context: Context, remote: JsonObject, applySettings: Boolean) {
-        // Word counts.
-        (remote["words"] as? JsonObject)?.let { obj ->
-            val map = HashMap<String, Pair<Double, Long>>()
-            for ((w, v) in obj) {
-                val a = (v as? JsonArray) ?: continue
-                val score = a.getOrNull(0)?.jsonPrimitive?.doubleOrNull ?: continue
-                val last = a.getOrNull(1)?.jsonPrimitive?.longOrNull ?: continue
-                map[w] = score to last
+    /** One profile in map form. A null section = absent from that copy. */
+    private class Parsed(
+        val words: Map<String, Pair<Double, Long>>? = null,
+        val learned: Map<String, ProfileMerge.Counted>? = null,
+        val pairs: Map<String, ProfileMerge.Counted>? = null,
+        val dictionary: Map<String, ProfileMerge.DictWord>? = null,
+        val settings: Map<String, String>? = null,
+        val touch: String? = null,
+        val updatedAt: Long = 0L,
+    ) {
+        fun toJson(nowSec: Long): JsonObject = buildJsonObject {
+            put("version", FORMAT_VERSION)
+            put("updated_at", nowSec)
+            words?.let { w ->
+                put("words", buildJsonObject {
+                    w.entries.sortedByDescending { it.value.first }.take(MAX_WORDS_UP).forEach { (k, v) ->
+                        put(k, buildJsonArray { add(JsonPrimitive(Math.round(v.first * 1000) / 1000.0)); add(JsonPrimitive(v.second)) })
+                    }
+                })
             }
-            PersonalWords.current(context, prefs).merge(map)
+            learned?.let { m ->
+                put("learned", buildJsonArray {
+                    for ((k, e) in m) add(buildJsonArray {
+                        add(JsonPrimitive(e.word)); add(JsonPrimitive(k.substringBefore('|'))); add(JsonPrimitive(e.count)); add(JsonPrimitive(e.lastUsed))
+                    })
+                })
+            }
+            pairs?.let { m ->
+                put("pairs", buildJsonArray {
+                    for ((k, e) in m.entries.sortedByDescending { it.value.count }.take(MAX_PAIRS_UP)) {
+                        val parts = k.split('|', limit = 3)
+                        if (parts.size < 3) continue
+                        add(buildJsonArray {
+                            add(JsonPrimitive(parts[1])); add(JsonPrimitive(e.word)); add(JsonPrimitive(parts[0]))
+                            add(JsonPrimitive(e.count)); add(JsonPrimitive(e.lastUsed))
+                        })
+                    }
+                })
+            }
+            dictionary?.let { m ->
+                put("dictionary", buildJsonArray {
+                    for (e in m.values) add(buildJsonArray {
+                        add(JsonPrimitive(e.word)); add(JsonPrimitive(e.locale)); add(JsonPrimitive(e.shortcut))
+                    })
+                })
+            }
+            touch?.let { runCatching { put("touch", Json.parseToJsonElement(it).jsonObject) } }
+            settings?.let { m ->
+                put("settings", buildJsonObject {
+                    for ((k, v) in m) runCatching { put(k, Json.parseToJsonElement(v)) }
+                })
+            }
         }
-        // Touch habits.
-        (remote["touch"] as? JsonObject)?.let { obj ->
-            TouchHabits.current().merge(obj.toString())
-            TouchHabits.save()
-        }
-        // Learned words: [word, lang, count, last_used].
-        (remote["learned"] as? JsonArray)?.forEach { el ->
-            val a = el as? JsonArray ?: return@forEach
-            val word = a.getOrNull(0)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@forEach
-            val lang = a.getOrNull(1)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@forEach
-            val count = a.getOrNull(2)?.jsonPrimitive?.intOrNull ?: return@forEach
-            val last = a.getOrNull(3)?.jsonPrimitive?.longOrNull ?: return@forEach
-            LearnedWordsStore.importWord(context, word, DictFold.foldKey(lang, word), lang, count, last)
-        }
-        // Word pairs: [prev, word, lang, count, last_used].
-        (remote["pairs"] as? JsonArray)?.forEach { el ->
-            val a = el as? JsonArray ?: return@forEach
-            val prev = a.getOrNull(0)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@forEach
-            val word = a.getOrNull(1)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@forEach
-            val lang = a.getOrNull(2)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@forEach
-            val count = a.getOrNull(3)?.jsonPrimitive?.intOrNull ?: return@forEach
-            val last = a.getOrNull(4)?.jsonPrimitive?.longOrNull ?: return@forEach
-            LearnedWordsStore.importBigram(context, prev, word, lang, count, last)
-        }
-        // Personal dictionary: [word, locale|null, shortcut|null]. Only words this device lacks.
-        (remote["dictionary"] as? JsonArray)?.let { arr ->
-            val dm = DictionaryManager.default()
-            dm.loadUserDictionariesIfNecessary()
-            val dao = dm.florisUserDictionaryDao()
-            if (dao != null) {
-                val have = dao.queryAll().map { it.word.lowercase() + "|" + it.locale.orEmpty() }.toHashSet()
-                for (el in arr) {
-                    val a = el as? JsonArray ?: continue
-                    val word = a.getOrNull(0)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: continue
-                    val locale = a.getOrNull(1)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-                    val shortcut = a.getOrNull(2)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-                    if (!have.add(word.lowercase() + "|" + locale.orEmpty())) continue
-                    runCatching { dao.insert(UserDictionaryEntry(0, word, 255, locale, shortcut)) }
+
+        companion object {
+            fun of(obj: JsonObject): Parsed {
+                val words = (obj["words"] as? JsonObject)?.let { o ->
+                    val m = HashMap<String, Pair<Double, Long>>()
+                    for ((w, v) in o) {
+                        val a = v as? JsonArray ?: continue
+                        val score = a.getOrNull(0)?.jsonPrimitive?.doubleOrNull ?: continue
+                        val last = a.getOrNull(1)?.jsonPrimitive?.longOrNull ?: continue
+                        m[w.lowercase()] = score to last
+                    }
+                    m
                 }
-            }
-        }
-        if (applySettings) {
-            (remote["settings"] as? JsonObject)?.let { obj ->
-                for ((name, v) in obj) {
-                    val setting = SETTINGS[name] ?: continue
-                    val p = v as? JsonPrimitive ?: continue
-                    runCatching { setting.write(prefs, p) }
+                val learned = (obj["learned"] as? JsonArray)?.let { arr ->
+                    val m = HashMap<String, ProfileMerge.Counted>()
+                    for (el in arr) {
+                        val a = el as? JsonArray ?: continue
+                        val word = a.getOrNull(0)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: continue
+                        val lang = a.getOrNull(1)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: continue
+                        val count = a.getOrNull(2)?.jsonPrimitive?.intOrNull ?: continue
+                        val last = a.getOrNull(3)?.jsonPrimitive?.longOrNull ?: continue
+                        m[lang + "|" + DictFold.foldKey(lang, word)] = ProfileMerge.Counted(word, count, last)
+                    }
+                    m
                 }
+                val pairs = (obj["pairs"] as? JsonArray)?.let { arr ->
+                    val m = HashMap<String, ProfileMerge.Counted>()
+                    for (el in arr) {
+                        val a = el as? JsonArray ?: continue
+                        val prev = a.getOrNull(0)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: continue
+                        val word = a.getOrNull(1)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: continue
+                        val lang = a.getOrNull(2)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: continue
+                        val count = a.getOrNull(3)?.jsonPrimitive?.intOrNull ?: continue
+                        val last = a.getOrNull(4)?.jsonPrimitive?.longOrNull ?: continue
+                        m["$lang|$prev|$word"] = ProfileMerge.Counted(word, count, last)
+                    }
+                    m
+                }
+                val dictionary = (obj["dictionary"] as? JsonArray)?.let { arr ->
+                    val m = HashMap<String, ProfileMerge.DictWord>()
+                    for (el in arr) {
+                        val a = el as? JsonArray ?: continue
+                        val word = a.getOrNull(0)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: continue
+                        val locale = a.getOrNull(1)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        val shortcut = a.getOrNull(2)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        m[dictKey(word, locale)] = ProfileMerge.DictWord(word, locale, shortcut)
+                    }
+                    m
+                }
+                val settings = (obj["settings"] as? JsonObject)?.let { o ->
+                    o.filter { it.key in SETTINGS && it.value is JsonPrimitive }.mapValues { it.value.toString() }
+                }
+                return Parsed(
+                    words, learned, pairs, dictionary, settings,
+                    touch = (obj["touch"] as? JsonObject)?.toString(),
+                    updatedAt = (obj["updated_at"] as? JsonPrimitive)?.longOrNull ?: 0L,
+                )
             }
+
+            fun dictKey(word: String, locale: String?) = word.lowercase() + "|" + locale.orEmpty()
         }
     }
 
-    private suspend fun buildUpload(context: Context): JsonObject {
-        val now = System.currentTimeMillis() / 1000L
-        val counts = PersonalWords.current(context, prefs).export()
-            .entries
-            .sortedByDescending { dev.patrickgold.florisboard.ime.nlp.latin.PersonalWordCounts.decayed(it.value.first, it.value.second, now) }
-            .take(MAX_WORDS_UP)
-        val learned = LearnedWordsStore.exportWords(context)
-        val pairs = LearnedWordsStore.exportBigrams(context).sortedByDescending { it.count }.take(MAX_PAIRS_UP)
+    private suspend fun readLocal(context: Context): Parsed {
         val dm = DictionaryManager.default()
         dm.loadUserDictionariesIfNecessary()
-        val dictionary = dm.florisUserDictionaryDao()?.queryAll().orEmpty()
-        val touch = json.parseToJsonElement(TouchHabits.current().toJson()).jsonObject
-        return buildJsonObject {
-            put("version", FORMAT_VERSION)
-            put("updated_at", now)
-            put("words", buildJsonObject {
-                for ((w, v) in counts) put(w, buildJsonArray { add(JsonPrimitive(Math.round(v.first * 1000) / 1000.0)); add(JsonPrimitive(v.second)) })
-            })
-            put("learned", buildJsonArray {
-                for (e in learned) add(buildJsonArray {
-                    add(JsonPrimitive(e.word)); add(JsonPrimitive(e.lang)); add(JsonPrimitive(e.count)); add(JsonPrimitive(e.lastUsed))
-                })
-            })
-            put("pairs", buildJsonArray {
-                for (e in pairs) add(buildJsonArray {
-                    add(JsonPrimitive(e.prev)); add(JsonPrimitive(e.word)); add(JsonPrimitive(e.lang))
-                    add(JsonPrimitive(e.count)); add(JsonPrimitive(e.lastUsed))
-                })
-            })
-            put("dictionary", buildJsonArray {
-                for (e in dictionary) add(buildJsonArray {
-                    add(JsonPrimitive(e.word)); add(JsonPrimitive(e.locale)); add(JsonPrimitive(e.shortcut))
-                })
-            })
-            put("touch", touch)
-            put("settings", buildJsonObject {
-                for ((name, s) in SETTINGS) runCatching { put(name, s.read(prefs)) }
-            })
+        return Parsed(
+            words = PersonalWords.current(context, prefs).export(),
+            learned = LearnedWordsStore.exportWords(context)
+                .associate { it.lang + "|" + it.key to ProfileMerge.Counted(it.word, it.count, it.lastUsed) },
+            pairs = LearnedWordsStore.exportBigrams(context)
+                .associate { "${it.lang}|${it.prev}|${it.word}" to ProfileMerge.Counted(it.word, it.count, it.lastUsed) },
+            dictionary = dm.florisUserDictionaryDao()?.queryAll().orEmpty()
+                .associate { Parsed.dictKey(it.word, it.locale) to ProfileMerge.DictWord(it.word, it.locale, it.shortcut) },
+            settings = SETTINGS.mapNotNull { (name, s) -> runCatching { name to s.read(prefs).toString() }.getOrNull() }.toMap(),
+            touch = TouchHabits.current().toJson(),
+        )
+    }
+
+    private fun mergedTouch(local: String?, remote: String?): String {
+        val m = TouchHabitModelCopy.of(local)
+        if (!remote.isNullOrBlank()) m.merge(remote)
+        return m.toJson()
+    }
+
+    private object TouchHabitModelCopy {
+        fun of(json: String?) = dev.patrickgold.florisboard.ime.nlp.latin.TouchHabitModel().apply { if (!json.isNullOrBlank()) loadJson(json) }
+    }
+
+    private suspend fun applyLocally(context: Context, merged: Parsed, atMerge: Parsed) {
+        PersonalWords.current(context, prefs).applyMerged(merged.words.orEmpty(), atMerge.words.orEmpty())
+        LearnedWordsStore.applyMergedWords(context, merged.learned.orEmpty(), atMerge.learned.orEmpty())
+        LearnedWordsStore.applyMergedBigrams(context, merged.pairs.orEmpty(), atMerge.pairs.orEmpty())
+        // Personal dictionary: add what is new, remove what the merge dropped (if it is still as it was).
+        val dm = DictionaryManager.default()
+        dm.loadUserDictionariesIfNecessary()
+        dm.florisUserDictionaryDao()?.let { dao ->
+            val nowRows = dao.queryAll()
+            val have = nowRows.associateBy { Parsed.dictKey(it.word, it.locale) }
+            val target = merged.dictionary.orEmpty()
+            for ((k, w) in target) {
+                val cur = have[k]
+                if (cur == null) {
+                    runCatching { dao.insert(UserDictionaryEntry(0, w.word, 255, w.locale, w.shortcut)) }
+                } else if (cur.shortcut != w.shortcut || cur.word != w.word) {
+                    runCatching { dao.update(cur.copy(word = w.word, shortcut = w.shortcut)) }
+                }
+            }
+            for ((k, cur) in have) {
+                if (k !in target && atMerge.dictionary?.containsKey(k) == true) runCatching { dao.delete(cur) }
+            }
+        }
+        // Touch habits: the merged model.
+        merged.touch?.let { TouchHabits.current().merge(it); TouchHabits.save() }
+        // Settings: only those that differ, so nothing is rewritten for nothing.
+        val current = SETTINGS.mapNotNull { (name, s) -> runCatching { name to s.read(prefs).toString() }.getOrNull() }.toMap()
+        for ((name, v) in merged.settings.orEmpty()) {
+            if (current[name] == v) continue
+            val p = runCatching { Json.parseToJsonElement(v) as? JsonPrimitive }.getOrNull() ?: continue
+            runCatching { SETTINGS[name]?.write?.invoke(prefs, p) }
+        }
+    }
+
+    // ---- The base: this device's copy of the profile after its last sync, per person ---------------
+
+    private fun baseFile(context: Context, who: String) =
+        java.io.File(java.io.File(context.applicationContext.filesDir, "vk_learning").apply { mkdirs() }, "sync_base_$who.json")
+
+    private fun readBase(context: Context, who: String): Parsed? = runCatching {
+        val f = baseFile(context, who).takeIf { it.isFile } ?: return null
+        Parsed.of(json.parseToJsonElement(f.readText()).jsonObject)
+    }.getOrNull()
+
+    private fun writeBase(context: Context, who: String, merged: Parsed, nowSec: Long) {
+        runCatching {
+            val f = baseFile(context, who)
+            val tmp = java.io.File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(merged.toJson(nowSec).toString())
+            tmp.renameTo(f)
         }
     }
 
@@ -367,5 +489,7 @@ object VkPersonSync {
     /** "Forget everything": the next sync starts as the first one again. */
     fun forgetLocalState(context: Context) {
         meta(context).edit().clear().apply()
+        java.io.File(context.applicationContext.filesDir, "vk_learning").listFiles { f -> f.name.startsWith("sync_base_") }
+            ?.forEach { it.delete() }
     }
 }

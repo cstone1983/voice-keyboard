@@ -242,6 +242,62 @@ object LearnedWordsStore {
         invalidate(lang)
     }
 
+    /**
+     * Writes a merged profile's learned words back ([dev.patrickgold.florisboard.vk.learning.VkPersonSync]).
+     * Keys are "lang|foldkey". [atMerge] is what this device held when the merge was computed: anything
+     * typed while the sync ran is kept on top, and a word dropped by the merge is only deleted if it was
+     * not used again in the meantime.
+     */
+    suspend fun applyMergedWords(
+        context: Context,
+        merged: Map<String, dev.patrickgold.florisboard.vk.learning.ProfileMerge.Counted>,
+        atMerge: Map<String, dev.patrickgold.florisboard.vk.learning.ProfileMerge.Counted>,
+    ) {
+        val dao = db(context).dao()
+        val now = dao.allWords().associateBy { it.lang + "|" + it.key }
+        for ((k, m) in merged) {
+            val cur = now[k]
+            if (cur == null) {
+                val lang = k.substringBefore('|')
+                dao.insertWord(LearnedWordEntry(word = m.word, key = k.substringAfter('|'), lang = lang, count = m.count.coerceAtLeast(1), lastUsed = m.lastUsed))
+            } else {
+                val count = dev.patrickgold.florisboard.vk.learning.ProfileMerge.keepWhileSyncing(m.count, atMerge[k]?.count, cur.count)
+                val last = maxOf(cur.lastUsed, m.lastUsed)
+                if (count != cur.count || last != cur.lastUsed) dao.setWordCount(cur.id, count, last)
+            }
+        }
+        val gone = now.filter { (k, cur) -> k !in merged && atMerge[k]?.let { cur.count <= it.count } == true }
+        if (gone.isNotEmpty()) dao.deleteWordsById(gone.values.map { it.id })
+        invalidate()
+    }
+
+    /** The same for word pairs; keys are "lang|prev|word". */
+    suspend fun applyMergedBigrams(
+        context: Context,
+        merged: Map<String, dev.patrickgold.florisboard.vk.learning.ProfileMerge.Counted>,
+        atMerge: Map<String, dev.patrickgold.florisboard.vk.learning.ProfileMerge.Counted>,
+    ) {
+        val dao = db(context).dao()
+        val now = dao.allBigrams().associateBy { it.lang + "|" + it.prev + "|" + it.word }
+        val updates = ArrayList<LearnedBigramEntry>()
+        for ((k, m) in merged) {
+            val cur = now[k]
+            if (cur == null) {
+                val parts = k.split('|', limit = 3)
+                if (parts.size < 3) continue
+                dao.insertBigram(LearnedBigramEntry(prev = parts[1], word = parts[2], lang = parts[0], count = m.count.coerceAtLeast(1), lastUsed = m.lastUsed))
+            } else {
+                val count = dev.patrickgold.florisboard.vk.learning.ProfileMerge.keepWhileSyncing(m.count, atMerge[k]?.count, cur.count)
+                val last = maxOf(cur.lastUsed, m.lastUsed)
+                if (count != cur.count || last != cur.lastUsed) updates.add(cur.copy(count = count, lastUsed = last))
+            }
+        }
+        if (updates.isNotEmpty()) dao.updateBigrams(updates)
+        val gone = now.filter { (k, cur) -> k !in merged && atMerge[k]?.let { cur.count <= it.count } == true }
+        if (gone.isNotEmpty()) dao.deleteBigramsById(gone.values.map { it.id })
+        invalidate()
+    }
+
     // ── The settings screen ──────────────────────────────────────────────────────────────────────
 
     /** Every learned word, promoted first then by weight — the list the user inspects and edits. */

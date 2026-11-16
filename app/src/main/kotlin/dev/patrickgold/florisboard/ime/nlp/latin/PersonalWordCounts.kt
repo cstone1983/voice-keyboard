@@ -118,6 +118,27 @@ class PersonalWordCounts(private val dir: File?) {
         flush(nowSec)
     }
 
+    /**
+     * Writes a merged profile's counts back: each word becomes its merged score plus whatever it gained
+     * here while the sync ran (since [atMerge] was read). Words the merge does not mention stay.
+     */
+    @Synchronized
+    fun applyMerged(
+        merged: Map<String, Pair<Double, Long>>,
+        atMerge: Map<String, Pair<Double, Long>>,
+        nowSec: Long = System.currentTimeMillis() / 1000L,
+    ) {
+        for ((w, m) in merged) {
+            val cur = words[w]?.let { decayed(it.score, it.lastUsed, nowSec) } ?: 0.0
+            val before = atMerge[w]?.let { decayed(it.first, it.second, nowSec) } ?: 0.0
+            val score = decayed(m.first, m.second, nowSec) + maxOf(0.0, cur - before)
+            words[w] = Entry(score, nowSec)
+            dirty++
+        }
+        if (words.size > MAX_WORDS) prune(nowSec)
+        flush(nowSec)
+    }
+
     @Synchronized
     fun clear() {
         words = HashMap()

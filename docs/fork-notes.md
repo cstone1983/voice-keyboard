@@ -211,10 +211,14 @@ to other devices through their own server. Server contract: `docs/server-persona
    normal keyboard apart, from finished words (as typed, or the autocorrected word when the lengths match).
    Used after 8 samples, capped at 0.35/0.30 key widths, last ~60 samples. A touch goes to the key whose
    learned aim point is nearest. Switch: "Learn my touch habits".
-5. **Profile sync** (`VkPersonSync.kt`): `GET`/`POST vk/personal` every 6 h at keyboard start, right after a
-   person switch, or with "Sync my profile now". Merge keeps the larger value (never adds). Settings come
-   from the server on a person's first sync on a device, then go up from the device. 404 = no endpoint
-   (retry after a day).
+5. **Profile sync across devices** (`VkPersonSync.kt`, merge rules in `ProfileMerge.kt`): `GET`/`POST
+   vk/personal` at keyboard start (at most every 15 min), right after a person switch, when leaving the
+   Voice Keyboard settings page, or with "Sync my profile now". Each device keeps a *base* per person
+   (`files/vk_learning/sync_base_<hash>.json`, the profile after its last sync) and merges three ways:
+   counts add what each device gained since its base; an entry removed on any device is removed
+   everywhere (a missing section removes nothing); a setting changed on this device goes up, otherwise
+   the server's comes down (on a person switch the server's always). Uses kept while the sync runs.
+   `if_updated_at` + 409 → merge again once (server side optional). 404 = no endpoint (retry after a day).
 6. **Own voice model**: `vk/me` `stt_model` is stored per person and used as the transcription model on
    the own server. Switch: "Use my own voice model".
 

@@ -64,6 +64,10 @@ fun VkHubScreen() = FlorisScreen {
         val syncScope = rememberCoroutineScope()
         var syncing by remember { mutableStateOf(false) }
         val lastSync by dev.patrickgold.florisboard.vk.learning.VkPersonSync.status.collectAsState()
+        // Leaving this page sends any setting changed here to the person's other devices.
+        androidx.compose.runtime.DisposableEffect(Unit) {
+            onDispose { dev.patrickgold.florisboard.vk.learning.VkPersonSync.syncSoon(context.applicationContext) }
+        }
         val active = accounts[providerId]?.takeIf { it.isCustom }
 
         PreferenceGroup(title = "Your AI server") {

@@ -13,6 +13,13 @@ One keyboard profile per person, so it follows them to any device.
   The server stores it as the person's current profile (replace). The app has already merged the
   server's copy into its own before posting, so the server does not need to merge.
 - Body up to about 2 MB; reject larger with `413`.
+- **Several devices per person.** When storing, set the profile's `updated_at` to the server's time (so
+  `GET` returns it). A `POST` may carry `"if_updated_at": <updated_at from the GET it merged>`: if the
+  stored profile's `updated_at` is different (another device saved in between), do not store and answer
+  `409 {"error": "changed", "updated_at": <stored>}`; the app reads again, merges and retries. When the
+  GET returned no stored profile (empty or seeded), the app sends what it saw (0 or the seed's time):
+  refuse with 409 if a stored profile exists by now. Without the field, store as before.
+  Do not store `if_updated_at` itself.
 
 Profile (format version 1; unknown fields must be kept or ignored, never rejected):
 
