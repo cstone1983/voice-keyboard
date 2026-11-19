@@ -330,6 +330,8 @@ fun VkLearningScreen() = FlorisScreen {
                 scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.save() }
                 dev.patrickgold.florisboard.vk.learning.VkPersonSync.syncSoon(context.applicationContext)
             }
+            VkTouchMap(modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
             Text("Fixes learned from your typing", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Words you changed by hand. Offered from the first time, corrected automatically from the second.",

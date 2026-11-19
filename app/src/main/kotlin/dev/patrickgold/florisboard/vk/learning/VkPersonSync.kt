@@ -98,6 +98,7 @@ object VkPersonSync {
         "split_touch_lift_right_percent" to int({ it.keyboard.vkSplitTouchLiftRightPercent }, 0..60),
         "glide_when_split" to bool { it.keyboard.vkGlideWhenSplit },
         "touch_habits" to bool { it.keyboard.vkTouchHabits },
+        "reshape_keys" to bool { it.keyboard.vkReshapeKeys },
         "personal_word_ranking" to bool { it.dictate.vkPersonalWordRanking },
         "vocabulary_hint" to bool { it.dictate.vkVocabularyHint },
         "use_personal_model" to bool { it.dictate.vkUsePersonalModel },

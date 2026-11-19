@@ -1591,6 +1591,8 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         val vkGlideWhenSplit = boolean(key = "vk__glide_when_split", default = false)
         // Voice Keyboard: learn where this person's thumbs land on each key and pick keys accordingly.
         val vkTouchHabits = boolean(key = "vk__touch_habits", default = true)
+        // Voice Keyboard: draw keys nudged towards where the person aims (updated when the keyboard opens).
+        val vkReshapeKeys = boolean(key = "vk__reshape_keys", default = true)
         val numberRow = boolean(
             key = "keyboard__number_row",
             default = false,

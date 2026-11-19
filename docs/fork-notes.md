@@ -246,7 +246,13 @@ Never in incognito or password fields; only words and letter pairs are kept, tex
    of mind. Fixes are offered at once and applied by Space from the second sighting (if the typed word is
    not a word itself).
 6. **Corrections taken back** (immediate backspace, or changed back later): blocked for good.
-7. Settings → Voice Keyboard → Progress, learned words, privacy → "Fixes learned from your typing" lists
+7. **Reshaped keys** ("Reshape keys to my aim", on): letter keys and the space bar are *drawn* nudged
+   towards the learned aim point (60 % of it, at most 0.15 key widths). Taken in `FlorisImeService.onWindowShown`
+   (`TouchHabits.freezeVisual`), so keys only change when the keyboard opens, never while typing. Drawing
+   only; which key a touch belongs to is decided by the touch habits as before.
+8. **Touch map** (`VkTouchMap.kt`, on the Learning page): each key of the folded / split layout with a dot
+   where taps for it land (once a key has enough taps).
+9. Settings → Voice Keyboard → Progress, learned words, privacy → "Fixes learned from your typing" lists
    fixes, blocked corrections and the most mixed-up keys, each removable.
 
 ## Changes made (vs. upstream)

@@ -142,6 +142,9 @@ object KeyProximityInfo {
         layout = Layout(codes.toIntArray(), xs.toFloatArray(), ys.toFloatArray())
     }
 
+    /** Voice Keyboard: pixel width of one key in the current layout (0 before the first). */
+    val keyWidth: Float get() = keyWidthPx
+
     /** True once a layout has been captured and distances can be computed. */
     val isReady: Boolean
         get() = layout != null && keyWidthPx > 0f

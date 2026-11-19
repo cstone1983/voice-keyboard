@@ -545,6 +545,9 @@ class FlorisImeService : LifecycleInputMethodService() {
         super.onWindowShown()
         if (windowController.onWindowShown()) {
             flogInfo(LogTopic.IMS_EVENTS)
+            // Voice Keyboard: the reshaped keys take the person's touch habits as they are now, and keep
+            // them until the keyboard is opened again — never while it is being typed on.
+            runCatching { dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.freezeVisual() }
             inputFeedbackController.updateSystemPrefsState()
         } else {
             flogWarning(LogTopic.IMS_EVENTS) { "Ignoring (is already shown)" }

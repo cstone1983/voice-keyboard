@@ -146,6 +146,7 @@ fun TextKeyboardLayout(
             // many users); the glide classifier still only gets it when glide is enabled.
             KeyProximityInfo.update(keys)
             dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.attach(context)
+            dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.noteLayout(keyboard.isVkSplit)
             dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.attach(context)
             if (glideEnabled) {
                 glideTypingManager.setLayout(keys)
@@ -374,13 +375,28 @@ private fun TextKeyButton(
     val size = remember(key, desiredKey) {
         key.visibleBounds.size.toDpSize()
     }
+    val vkVisual by dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.visualOffsets.collectAsState()
     SnyggBox(
         FlorisImeUi.Key.elementName,
         attributes = attributes,
         selector = selector,
         modifier = Modifier
             .requiredSize(size)
-            .absoluteOffset { key.visibleBounds.topLeft.toIntOffset() },
+            .absoluteOffset {
+                // Voice Keyboard: nudged towards where this person aims (fixed while the keyboard is open).
+                val base = key.visibleBounds.topLeft.toIntOffset()
+                val code = key.computedData.code
+                val split = (evaluator.keyboard as? TextKeyboard)?.isVkSplit == true
+                val off = if (code == KeyCode.SPACE || (code > 32 && Character.isLetter(code))) {
+                    vkVisual[(if (split) "s:" else "n:") + Character.toLowerCase(code.toChar())]
+                } else {
+                    null
+                }
+                val w = dev.patrickgold.florisboard.ime.nlp.latin.KeyProximityInfo.keyWidth
+                if (off == null || w <= 0f) base else androidx.compose.ui.unit.IntOffset(
+                    base.x + (off[0] * w).toInt(), base.y + (off[1] * w).toInt(),
+                )
+            },
     ) {
         val isTelPadKey = key.computedData.type == KeyType.NUMERIC && evaluator.keyboard.mode == KeyboardMode.PHONE
         key.label?.let { label ->

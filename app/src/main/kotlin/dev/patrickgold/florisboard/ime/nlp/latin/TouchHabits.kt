@@ -169,6 +169,56 @@ object TouchHabits {
 
     fun enabled(): Boolean = prefs.keyboard.vkTouchHabits.get()
 
+    // ---- What the person sees: the touch map and the reshaped keys --------------------------------
+
+    /** The last layout of each kind (split / normal), for the touch map. */
+    @Volatile private var layoutSplit: KeyProximityInfo.Layout? = null
+    @Volatile private var layoutNormal: KeyProximityInfo.Layout? = null
+
+    /** The keyboard was laid out: remember its geometry for the touch map. */
+    fun noteLayout(split: Boolean) {
+        val l = KeyProximityInfo.snapshot() ?: return
+        if (split) layoutSplit = l else layoutNormal = l
+    }
+
+    fun layoutFor(split: Boolean): KeyProximityInfo.Layout? = if (split) layoutSplit else layoutNormal
+
+    /**
+     * Where each key is *drawn*, nudged towards where this person aims ("s:v" → dx, dy in key widths).
+     * Taken only when the keyboard opens ([freezeVisual]), so keys never move under the fingers while
+     * typing. Drawing only: which key a touch belongs to is decided as before.
+     */
+    private val _visualOffsets = kotlinx.coroutines.flow.MutableStateFlow<Map<String, FloatArray>>(emptyMap())
+    val visualOffsets: kotlinx.coroutines.flow.StateFlow<Map<String, FloatArray>> = _visualOffsets
+
+    fun reshapeEnabled(): Boolean = prefs.keyboard.vkReshapeKeys.get() && enabled()
+
+    /** The keyboard opened: take the current habits as the key shapes until it opens again. */
+    fun freezeVisual() {
+        if (!reshapeEnabled()) {
+            if (_visualOffsets.value.isNotEmpty()) _visualOffsets.value = emptyMap()
+            return
+        }
+        val m = current()
+        val out = HashMap<String, FloatArray>()
+        synchronized(m) {
+            for ((k, _) in m.keys) {
+                val split = k.startsWith("s:")
+                val c = k.substringAfter(':').firstOrNull() ?: continue
+                val off = m.offsetOf(c, split) ?: continue
+                out[k] = floatArrayOf(
+                    (off[0] * VISUAL_SCALE).coerceIn(-VISUAL_MAX, VISUAL_MAX),
+                    (off[1] * VISUAL_SCALE).coerceIn(-VISUAL_MAX, VISUAL_MAX),
+                )
+            }
+        }
+        _visualOffsets.value = out
+    }
+
+    /** Keys are drawn this share of the way to the learned aim point, at most [VISUAL_MAX] key widths. */
+    private const val VISUAL_SCALE = 0.6f
+    private const val VISUAL_MAX = 0.15f
+
     /** Whether the keyboard last touched was split; set on every letter touch. */
     @Volatile var lastSplit: Boolean = false
 

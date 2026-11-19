@@ -213,6 +213,13 @@ fun VkHubScreen() = FlorisScreen {
                 iconSpaceReserved = true,
             )
             SwitchPreference(
+                prefs.keyboard.vkReshapeKeys,
+                title = "Reshape keys to my aim",
+                summary = "Keys are drawn shifted towards where you tap. Updates when the keyboard opens, never while typing",
+                iconSpaceReserved = true,
+                enabledIf = { prefs.keyboard.vkTouchHabits isEqualTo true },
+            )
+            SwitchPreference(
                 prefs.keyboard.vkGlideWhenSplit,
                 title = "Swipe typing on the split keyboard",
                 summary = "Off by default: quick taps were read as swipes",
