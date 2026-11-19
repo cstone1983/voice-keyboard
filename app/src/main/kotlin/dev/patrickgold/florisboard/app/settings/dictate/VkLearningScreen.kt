@@ -318,6 +318,61 @@ fun VkLearningScreen() = FlorisScreen {
                 }
             }
 
+            // Voice Keyboard: what the person's own typing fixes taught the keyboard (on this phone and synced).
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            var fixesVersion by remember { mutableStateOf(0) }
+            val fixModel = remember(actingUser, fixesVersion) { dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current() }
+            val fixList = remember(actingUser, fixesVersion) { fixModel.allFixes().take(40) }
+            val blockedList = remember(actingUser, fixesVersion) { fixModel.allBlocked().take(20) }
+            val mixUps = remember(actingUser, fixesVersion) { fixModel.topConfusions(6) }
+            fun changedFixes() {
+                fixesVersion++
+                scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.save() }
+                dev.patrickgold.florisboard.vk.learning.VkPersonSync.syncSoon(context.applicationContext)
+            }
+            Text("Fixes learned from your typing", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Words you changed by hand. Offered from the first time, corrected automatically from the second.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (fixList.isEmpty()) Text("None yet.", style = MaterialTheme.typography.bodyMedium)
+            fixList.forEach { f ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "${f.typo} → ${f.fix}" + if (f.count >= dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixModel.AUTO_AFTER) "  (automatic, ${f.count}×)" else "  (suggested)",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    IconButton(onClick = { fixModel.removeFix(f.typo, f.fix); changedFixes() }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                    }
+                }
+            }
+            if (blockedList.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Corrections you took back (never made again)", style = MaterialTheme.typography.titleSmall)
+                blockedList.forEach { (typed, wrong) ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("$typed ↛ $wrong", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        IconButton(onClick = { fixModel.unblock(typed, wrong); changedFixes() }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete")
+                        }
+                    }
+                }
+            }
+            if (mixUps.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Keys you mix up most", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    mixUps.joinToString("   ") { (k, n) ->
+                        val typed = k[0].let { if (it == ' ') "space" else it.toString() }
+                        val meant = k[2].let { if (it == ' ') "space" else it.toString() }
+                        "$typed for $meant ($n)"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = { exportLauncher.launch("voice-keyboard-learning.json") }, modifier = Modifier.weight(1f)) {
@@ -354,7 +409,7 @@ fun VkLearningScreen() = FlorisScreen {
             AlertDialog(
                 onDismissRequest = { confirmForget = false },
                 title = { Text("Forget everything?") },
-                text = { Text("Deletes all learned words, rules, corrections, dictations, styles, stored messages and voice clips on your server, and this person's word counts and touch habits on this phone. This cannot be undone.") },
+                text = { Text("Deletes all learned words, rules, corrections, dictations, styles, stored messages and voice clips on your server, and this person's word counts, touch habits and learned fixes on this phone. This cannot be undone.") },
                 confirmButton = {
                     TextButton(onClick = {
                         confirmForget = false
@@ -366,6 +421,7 @@ fun VkLearningScreen() = FlorisScreen {
                                 withContext(Dispatchers.IO) {
                                     dev.patrickgold.florisboard.ime.nlp.latin.PersonalWords.current(context, prefs).clear()
                                     dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.clear()
+                                    dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.clear()
                                     dev.patrickgold.florisboard.vk.learning.VkPersonSync.forgetLocalState(context)
                                 }
                                 items = emptyList()

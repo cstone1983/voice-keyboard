@@ -77,6 +77,13 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
         // to reserve for them so prefix completions of a typo don't crowd them out.
         private const val CORRECTION_MAX = CorrectionReaders.MAX_CORRECTIONS
         private const val CORRECTION_RESERVE = 3
+        /** Voice Keyboard: neighbour-key guesses for a half-typed word with a slip (see suggest()). */
+        private const val NEIGHBOUR_MAX = 2
+        /** …and how much more common than the best exact completion such a guess must be. */
+        private const val NEIGHBOUR_MARGIN = 15
+        /** Voice Keyboard: joined words are offered when both are this common, applied from the next. */
+        private const val SPLIT_MIN_FREQ = 150
+        private const val SPLIT_AUTO_FREQ = 190
 
         // A prefix with more dictionary words than this is left to the plain completion walk (issue #381):
         // with over a thousand matches in ~64,000 words, the walk meets its eight within the first few
@@ -971,9 +978,19 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
         prefixIndex = prefixIndex,
         maxCount = maxCount,
         allowDistance2 = allowDistance2,
-        sqDistance = KeyProximityInfo::normSqDistance,
+        sqDistance = ::personalSqDistance,
         contextScore = contextScore,
     ).map { index.canonical[it] ?: it }
+
+    /**
+     * Voice Keyboard: the key distance the string readers use, made shorter for the pairs this person
+     * mixes up ([PersonalFixModel.distanceFactor]), so their usual slips read as near ones.
+     */
+    private fun personalSqDistance(a: Char, b: Char): Float? {
+        val d = KeyProximityInfo.normSqDistance(a, b) ?: return null
+        if (a == b) return d
+        return d * PersonalFixes.current().distanceFactor(a, b)
+    }
 
     // --- Next-word prediction (issue #245) ----------------------------------------------------------
 
@@ -1132,7 +1149,7 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
             emptyList()
         }
         val byString = CorrectionReaders.completionsByString(
-            folded, prefixIndex, index.alphabet, maxCount, KeyProximityInfo::normSqDistance, contextScore,
+            folded, prefixIndex, index.alphabet, maxCount, ::personalSqDistance, contextScore,
         )
         return CorrectionReaders.completions(byTouch, byString).map { index.canonical[it] ?: it }
     }
@@ -1832,6 +1849,25 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
                 if (score > 0.0) score else Double.MAX_VALUE
             }
 
+        // Voice Keyboard: the person's own fix for exactly this word ("thw" → "the", "thisbis" → "this is"),
+        // learned from them changing it by hand. First in the strip; applied by Space once seen
+        // [PersonalFixModel.AUTO_AFTER] times, and only when the typed word is not a word of its own.
+        val fixModel = PersonalFixes.current()
+        val learnedFix = if (word.length >= 2) fixModel.fixFor(word) else null
+        if (learnedFix != null) {
+            val text = cased(learnedFix.fix)
+            out.putIfAbsent(
+                text.lowercase(),
+                WordSuggestionCandidate(
+                    text = text,
+                    confidence = 1.0,
+                    isEligibleForAutoCommit = autoCorrectOn && learnedFix.count >= PersonalFixModel.AUTO_AFTER && !isKnown,
+                    sourceProvider = this,
+                    isLearned = true,
+                ),
+            )
+        }
+
         // What the user stored behind this exact word as a *shortcut* — an e-mail address behind "mail",
         // say. Deliberately exempt from the prefix filter above and offered first, because an expansion
         // is the opposite of a completion: it looks nothing like what was typed, and typing the shortcut
@@ -2081,6 +2117,44 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
         addPersonalDownTo(0)
         addLearnedDownTo(0)
 
+        // Voice Keyboard: a slip on an early letter (even the first) of a word still being typed. The walk
+        // above reads the letters exactly as typed, so "rh" only ever offered words starting "rh". From
+        // the taps, also read the neighbouring keys and offer up to [NEIGHBOUR_MAX] words that are far
+        // more likely than anything the typed letters start (e.g. "the" for "rh"). Ahead of the exact
+        // completions, never applied by Space: the word is not finished. (A finished unknown word goes
+        // through the corrections below instead.)
+        if (!mayCorrect && word.length in 2..8) {
+            currentCoroutineContext().ensureActive()
+            val points = TouchTrace.pointsFor(word)
+            val layout = KeyProximityInfo.snapshot()
+            val prefixIdx = if (points != null && layout != null) prefixIndexFor(subtype) else null
+            if (points != null && layout != null && prefixIdx != null) {
+                val bestExact = out.values.maxOfOrNull { (it.confidence * 255).toInt() } ?: 0
+                val guesses = CorrectionReaders.completionsByTouch(points, word, index.fold(word), prefixIdx, layout, 6) { 0.0 }
+                    .map { index.canonical[it] ?: it }
+                    .filter { g ->
+                        val f = index.freq[index.fold(g)] ?: 0
+                        !g.startsWith(word, ignoreCase = true) && f >= bestExact + NEIGHBOUR_MARGIN &&
+                            !out.containsKey(g.lowercase())
+                    }
+                    .take(NEIGHBOUR_MAX)
+                if (guesses.isNotEmpty()) {
+                    val rest = LinkedHashMap(out)
+                    out.clear()
+                    for (g in guesses) {
+                        val text = cased(g)
+                        out[text.lowercase()] = WordSuggestionCandidate(
+                            text = text,
+                            confidence = (index.freq[index.fold(g)] ?: 0) / 255.0,
+                            isEligibleForAutoCommit = false,
+                            sourceProvider = this,
+                        )
+                    }
+                    for ((k, v) in rest) if (out.size < maxCandidateCount) out.putIfAbsent(k, v)
+                }
+            }
+        }
+
         // Spelling fixes for an unknown word — now surfaced even when there are prefix completions of the
         // typo (issue #212), so a missing apostrophe/hyphen or other slip is offered (whats → what's)
         // instead of only word extensions. Auto-commit stays conservative: only the top distance-1 fix and
@@ -2108,7 +2182,7 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
                 freq = index.freq,
                 alphabet = index.alphabet,
                 prefixIndex = prefixIndexFor(subtype),
-                sqDistance = KeyProximityInfo::normSqDistance,
+                sqDistance = ::personalSqDistance,
                 contextScore = ctx,
                 allowDistance2 = touchCorrections == null,
             )
@@ -2161,6 +2235,27 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
                     ),
                 )
             }
+            // Voice Keyboard: two words joined by a mistyped space — a letter next to the space bar between
+            // them ("thisbis") or no space at all ("thisis"). Offered when both halves are common words;
+            // applied by Space when they are very common and no one-letter fix is about as likely.
+            val split = if (word.length >= 4) {
+                EditDiffLearner.splitJoined(word, EditDiffLearner.SPACE_NEIGHBOURS) { index.freq[index.fold(it)] ?: 0 }
+                    ?.takeIf { it.third >= SPLIT_MIN_FREQ }
+            } else {
+                null
+            }
+            var splitClaimed = false
+            if (split != null) {
+                val text = cased(split.first) + " " + split.second.lowercase()
+                val leadFreq = corrections.firstOrNull()?.let { index.freq[index.fold(it)] ?: 0 } ?: 0
+                val eligible = autoCorrectOn && !slotClaimed && split.third >= SPLIT_AUTO_FREQ &&
+                    leadFreq < split.third && !fixModel.isBlocked(word, text)
+                splitClaimed = eligible
+                out.putIfAbsent(
+                    text.lowercase(),
+                    WordSuggestionCandidate(text = text, confidence = split.third / 255.0, isEligibleForAutoCommit = eligible, sourceProvider = this),
+                )
+            }
             // The user's own words go first among the corrections. They are not in the dictionary index,
             // so they carry no frequency of their own — they are ranked at the same band they occupy as
             // completions, which is what puts them ahead of a rare dictionary word one edit away.
@@ -2172,7 +2267,8 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
                     WordSuggestionCandidate(
                         text = text,
                         confidence = USER_DICTIONARY_RANK_FREQ / 255.0,
-                        isEligibleForAutoCommit = allowAutoCommit && i == 0,
+                        isEligibleForAutoCommit = allowAutoCommit && i == 0 && !splitClaimed &&
+                            !fixModel.isBlocked(word, correction),
                         sourceProvider = this,
                         isLearned = true,
                     ),
@@ -2190,7 +2286,8 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
                         // Only when nothing of the user's own already took the auto-commit slot: two bold
                         // candidates would be a lie about which one space is going to take.
                         isEligibleForAutoCommit = allowAutoCommit && correction == lead &&
-                            personalFixes.isEmpty() && freq >= AUTOCORRECT_MIN_FREQ,
+                            personalFixes.isEmpty() && freq >= AUTOCORRECT_MIN_FREQ && !splitClaimed &&
+                            !fixModel.isBlocked(word, correction),
                         sourceProvider = this,
                     ),
                 )

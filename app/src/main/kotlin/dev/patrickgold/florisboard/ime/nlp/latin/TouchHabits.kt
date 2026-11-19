@@ -35,7 +35,8 @@ class TouchHabitModel {
         if (intended.length < 2 || points.size != intended.length * 2) return
         for (i in intended.indices) {
             val c = intended[i].lowercaseChar()
-            if (!c.isLetter()) continue
+            // Letters, and the space bar (a space typed as a letter, "thisbis" for "this is").
+            if (!c.isLetter() && c != ' ') continue
             val px = points[i * 2]
             val py = points[i * 2 + 1]
             if (px.isNaN() || py.isNaN()) continue
@@ -52,6 +53,27 @@ class TouchHabitModel {
             e[2] = n
             changes++
         }
+    }
+
+    /** Learns one tap at ([x], [y]) (key widths) that was meant for [meant] (a backspaced-over slip). */
+    @Synchronized
+    fun learnTap(meant: Char, x: Float, y: Float, layout: KeyProximityInfo.Layout, split: Boolean) {
+        val c = meant.lowercaseChar()
+        if (!c.isLetter() && c != ' ') return
+        val idx = layout.indexOf(c)
+        if (idx < 0 || x.isNaN() || y.isNaN()) return
+        val dx = x - layout.xAt(idx)
+        val dy = y - layout.yAt(idx)
+        if (dx * dx + dy * dy > MAX_SAMPLE_DIST * MAX_SAMPLE_DIST) return
+        val e = keys.getOrPut(keyOf(split, c)) { FloatArray(3) }
+        // A slip says more than a hit: it counts as two samples.
+        repeat(2) {
+            val n = (e[2] + 1f).coerceAtMost(WINDOW)
+            e[0] += (dx - e[0]) / n
+            e[1] += (dy - e[1]) / n
+            e[2] = n
+        }
+        changes++
     }
 
     /** The learned offset of [c]'s key, in key widths, or null while it has too few samples. */
@@ -149,6 +171,22 @@ object TouchHabits {
 
     /** Whether the keyboard last touched was split; set on every letter touch. */
     @Volatile var lastSplit: Boolean = false
+
+    /**
+     * Learns from the slips fixed inside [word] by backspacing ([TouchTrace.repairsFor]): each such tap
+     * was meant for the letter typed in its place. Also counts them as the person's key mix-ups.
+     */
+    fun learnRepairs(word: String) {
+        val repairs = TouchTrace.repairsFor(word)
+        if (repairs.isEmpty() || repairs.size > maxOf(2, word.length / 2)) return
+        val layout = KeyProximityInfo.snapshot()
+        val m = current()
+        val fixes = PersonalFixes.current()
+        for (r in repairs) {
+            if (enabled() && layout != null) m.learnTap(r.meant, r.x, r.y, layout, lastSplit)
+            fixes.noteConfusion(r.tapped, r.meant)
+        }
+    }
 
     /**
      * Learns from a finished word: [intended] is what stands in the text, [typed] what the taps spelled

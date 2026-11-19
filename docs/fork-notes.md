@@ -225,6 +225,30 @@ to other devices through their own server. Server contract: `docs/server-persona
 Also: a spoken "comma" next to a comma that is already there no longer gives ",," (`VkCleanup`).
 "Forget everything" also clears the person's counts, touch habits and sync state on the phone.
 
+## Learning from typing mistakes (2026-11-19)
+
+Per person, in the synced profile (`fixes`, `blocked`, `confusion`), file `files/vk_learning/fixes_<hash>.json`.
+Never in incognito or password fields; only words and letter pairs are kept, text windows stay in memory.
+
+1. **Slips fixed inside a word** (`TouchTrace.repairsFor`): a tap backspaced over and replaced by another
+   letter teaches touch habits (counts double) and the key mix-up (`TouchHabits.learnRepairs`).
+2. **Key mix-ups** (`PersonalFixModel.confusion`): pairs mixed up often get a shorter key distance in the
+   string readers (`personalSqDistance`, down to 0.35×), so autocorrect reads them as near slips.
+3. **Wrong early letter, even the first** (suggest(), `NEIGHBOUR_*`): for a half-typed word that is a valid
+   prefix (2–8 letters), the taps are also read on neighbouring keys (`completionsByTouch`); up to 2 words
+   at least 15 more common than the best exact completion lead the strip ("rh" → "the"). Never by Space.
+4. **Joined words** (`EditDiffLearner.splitJoined`): "thisbis"/"thisis" → "this is" when both halves are
+   words (offered ≥150, applied by Space ≥190 and when no one-letter fix is as common). The space bar is
+   a touch-habit key too, so a space hit as a letter is learned.
+5. **Fixes by hand, a few words back too** (`EditDiffLearner`, `KeyboardManager.vkNoteEditWindow`): at each
+   word end the words around the cursor (±400 chars) are compared with the last word end; a word changed
+   to a similar word (distance ≤ 2) is a fix, one split in two a joined-words fix, anything else a change
+   of mind. Fixes are offered at once and applied by Space from the second sighting (if the typed word is
+   not a word itself).
+6. **Corrections taken back** (immediate backspace, or changed back later): blocked for good.
+7. Settings → Voice Keyboard → Progress, learned words, privacy → "Fixes learned from your typing" lists
+   fixes, blocked corrections and the most mixed-up keys, each removable.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

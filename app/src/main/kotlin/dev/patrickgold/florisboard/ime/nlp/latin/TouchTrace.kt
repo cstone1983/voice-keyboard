@@ -69,6 +69,14 @@ object TouchTrace {
         hasPending = true
     }
 
+    /** Tests: a pending tap already in key widths. */
+    @Synchronized
+    internal fun pendingTapNormalizedForTest(x: Float, y: Float) {
+        pendingX = x
+        pendingY = y
+        hasPending = true
+    }
+
     /**
      * The next character comes from a deliberate choice rather than a plain tap (long-press accent picker,
      * a popup selection). Recorded as certain: the decoder will not consider neighbouring keys for it.
@@ -93,6 +101,11 @@ object TouchTrace {
         }
         val i = chars.length
         chars.append(text[0])
+        popped.remove(i)?.let { p ->
+            if (!p.char.equals(text[0], ignoreCase = true) && repairs.size < MAX_LENGTH) {
+                repairs.add(Repair(i, p.char, text[0], p.x, p.y))
+            }
+        }
         if (hasPending) {
             xs[i] = pendingX
             ys[i] = pendingY
@@ -108,13 +121,39 @@ object TouchTrace {
     @Synchronized
     fun pop() {
         hasPending = false
-        if (chars.isNotEmpty()) chars.setLength(chars.length - 1)
+        if (chars.isNotEmpty()) {
+            // Voice Keyboard: remember what was taken back and where it was tapped, so a different letter
+            // typed in its place says which key that tap was meant for (see [repairsFor]).
+            val i = chars.length - 1
+            if (coordsValid && !xs[i].isNaN()) popped[i] = Popped(chars[i], xs[i], ys[i])
+            chars.setLength(i)
+        }
+    }
+
+    /** Voice Keyboard: a tap that was backspaced over and replaced by another letter. */
+    data class Repair(val index: Int, val tapped: Char, val meant: Char, val x: Float, val y: Float)
+
+    private data class Popped(val char: Char, val x: Float, val y: Float)
+    private val popped = HashMap<Int, Popped>()
+    private val repairs = ArrayList<Repair>()
+
+    /**
+     * The repairs inside [word] (it must be what the trace spells now): each a tap backspaced over and a
+     * different letter typed in its place, still standing in the word.
+     */
+    @Synchronized
+    fun repairsFor(word: String): List<Repair> {
+        if (word.length != chars.length) return emptyList()
+        for (i in word.indices) if (!word[i].equals(chars[i], ignoreCase = true)) return emptyList()
+        return repairs.filter { it.index < word.length && word[it.index].equals(it.meant, ignoreCase = true) }
     }
 
     /** Forget everything — the composing word ended or the editor state changed underneath us. */
     @Synchronized
     fun reset() {
         chars.setLength(0)
+        popped.clear()
+        repairs.clear()
         hasPending = false
         coordsValid = true
     }

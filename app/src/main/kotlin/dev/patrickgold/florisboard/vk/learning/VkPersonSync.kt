@@ -193,6 +193,9 @@ object VkPersonSync {
                         if (takeServerSettings) null else base?.settings,
                     ),
                     touch = mergedTouch(local.touch, r.touch),
+                    fixes = ProfileMerge.counted(r.fixes, local.fixes!!, base?.fixes),
+                    blocked = ProfileMerge.dictionary(r.blocked, local.blocked!!, base?.blocked),
+                    confusion = ProfileMerge.counted(r.confusion, local.confusion!!, base?.confusion),
                 )
                 val body = merged.toJson(now).let { obj ->
                     // The server refuses (409) if the profile changed since this copy was read.
@@ -231,6 +234,12 @@ object VkPersonSync {
         val settings: Map<String, String>? = null,
         val touch: String? = null,
         val updatedAt: Long = 0L,
+        /** Hand-made fixes, by "typo\u0001fix" (word = the fix as written). */
+        val fixes: Map<String, ProfileMerge.Counted>? = null,
+        /** Auto-corrections taken back, by "typed\u0001wrong". */
+        val blocked: Map<String, ProfileMerge.DictWord>? = null,
+        /** Key mix-ups, by "b>v" (count = how often). */
+        val confusion: Map<String, ProfileMerge.Counted>? = null,
     ) {
         fun toJson(nowSec: Long): JsonObject = buildJsonObject {
             put("version", FORMAT_VERSION)
@@ -269,6 +278,24 @@ object VkPersonSync {
                 })
             }
             touch?.let { runCatching { put("touch", Json.parseToJsonElement(it).jsonObject) } }
+            fixes?.let { m ->
+                put("fixes", buildJsonArray {
+                    for ((k, e) in m) add(buildJsonArray {
+                        add(JsonPrimitive(k.substringBefore('\u0001'))); add(JsonPrimitive(e.word))
+                        add(JsonPrimitive(e.count)); add(JsonPrimitive(e.lastUsed))
+                    })
+                })
+            }
+            blocked?.let { m ->
+                put("blocked", buildJsonArray {
+                    for (k in m.keys) add(buildJsonArray {
+                        add(JsonPrimitive(k.substringBefore('\u0001'))); add(JsonPrimitive(k.substringAfter('\u0001'))); add(JsonPrimitive(0))
+                    })
+                })
+            }
+            confusion?.let { m ->
+                put("confusion", buildJsonObject { for ((k, e) in m) put(k, e.count) })
+            }
             settings?.let { m ->
                 put("settings", buildJsonObject {
                     for ((k, v) in m) runCatching { put(k, Json.parseToJsonElement(v)) }
@@ -331,6 +358,9 @@ object VkPersonSync {
                     words, learned, pairs, dictionary, settings,
                     touch = (obj["touch"] as? JsonObject)?.toString(),
                     updatedAt = (obj["updated_at"] as? JsonPrimitive)?.longOrNull ?: 0L,
+                    fixes = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixCodec.readFixes(obj["fixes"])?.mapValues { (_, f) -> ProfileMerge.Counted(f.fix, f.count, f.lastUsed) },
+                    blocked = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixCodec.readBlocked(obj["blocked"])?.mapValues { (k, _) -> ProfileMerge.DictWord(k, null, null) },
+                    confusion = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixCodec.readConfusion(obj["confusion"])?.mapValues { (k, n) -> ProfileMerge.Counted(k, n, 0L) },
                 )
             }
 
@@ -351,6 +381,9 @@ object VkPersonSync {
                 .associate { Parsed.dictKey(it.word, it.locale) to ProfileMerge.DictWord(it.word, it.locale, it.shortcut) },
             settings = SETTINGS.mapNotNull { (name, s) -> runCatching { name to s.read(prefs).toString() }.getOrNull() }.toMap(),
             touch = TouchHabits.current().toJson(),
+            fixes = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current().exportFixes().mapValues { (_, f) -> ProfileMerge.Counted(f.fix, f.count, f.lastUsed) },
+            blocked = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current().exportBlocked().mapValues { (k, _) -> ProfileMerge.DictWord(k, null, null) },
+            confusion = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current().exportConfusion().mapValues { (k, n) -> ProfileMerge.Counted(k, n, 0L) },
         )
     }
 
@@ -386,6 +419,31 @@ object VkPersonSync {
             for ((k, cur) in have) {
                 if (k !in target && atMerge.dictionary?.containsKey(k) == true) runCatching { dao.delete(cur) }
             }
+        }
+        // Fixes, blocked corrections and key mix-ups, keeping what was learned while the sync ran.
+        run {
+            val model = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current()
+            val nowFixes = model.exportFixes()
+            val nowBlocked = model.exportBlocked()
+            val nowConf = model.exportConfusion()
+            val mf = merged.fixes.orEmpty()
+            val af = atMerge.fixes.orEmpty()
+            val fixes = HashMap<String, dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixModel.Fix>()
+            for ((k, m) in mf) {
+                val count = ProfileMerge.keepWhileSyncing(m.count, af[k]?.count, nowFixes[k]?.count)
+                fixes[k] = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixModel.Fix(k.substringBefore('\u0001'), m.word, count, maxOf(m.lastUsed, nowFixes[k]?.lastUsed ?: 0L))
+            }
+            for ((k, f) in nowFixes) if (k !in mf && k !in af) fixes[k] = f
+            val blocked = HashMap<String, Long>()
+            for (k in merged.blocked.orEmpty().keys) blocked[k] = nowBlocked[k] ?: 0L
+            for ((k, t) in nowBlocked) if (k !in atMerge.blocked.orEmpty()) blocked[k] = t
+            val conf = HashMap<String, Int>()
+            val mc = merged.confusion.orEmpty()
+            val ac = atMerge.confusion.orEmpty()
+            for ((k, m) in mc) conf[k] = ProfileMerge.keepWhileSyncing(m.count, ac[k]?.count, nowConf[k])
+            for ((k, n) in nowConf) if (k !in mc && k !in ac) conf[k] = n
+            model.replaceAll(fixes, blocked, conf)
+            dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.save()
         }
         // Touch habits: the merged model.
         merged.touch?.let { TouchHabits.current().merge(it); TouchHabits.save() }

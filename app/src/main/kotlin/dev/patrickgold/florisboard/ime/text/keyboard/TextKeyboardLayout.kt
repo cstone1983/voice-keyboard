@@ -146,6 +146,7 @@ fun TextKeyboardLayout(
             // many users); the glide classifier still only gets it when glide is enabled.
             KeyProximityInfo.update(keys)
             dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.attach(context)
+            dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.attach(context)
             if (glideEnabled) {
                 glideTypingManager.setLayout(keys)
             }

@@ -704,10 +704,15 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
             dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.learnWord(
                 candidate.text.toString(), editorInstance.activeContent.composingText,
             )
+            dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.learnRepairs(editorInstance.activeContent.composingText)
         }
         commitCandidate(candidate, byUser = false)
         val inserted = candidate.text.toString()
         nlpManager.countWordUse(inserted)
+        if (replaced.isNotEmpty() && replaced != inserted) {
+            vkRecentAutoCorrections.addLast(AutoCorrection(inserted = inserted, replaced = replaced))
+            while (vkRecentAutoCorrections.size > 20) vkRecentAutoCorrections.removeFirst()
+        }
         pendingAutoCorrection = if (replaced.isNotEmpty() && replaced != inserted) {
             AutoCorrection(inserted = inserted, replaced = replaced)
         } else {
@@ -744,6 +749,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
      */
     private fun endOfWord(): SuggestionCandidate? {
         val candidate = nlpManager.getAutoCommitCandidate(editorInstance.activeContent.composingText)
+        vkNoteEditWindow(candidate?.text?.toString())
         if (candidate != null) {
             commitAutoCorrection(candidate)
             lastTypedWord = null
@@ -773,7 +779,8 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         if (wasTyped && !activeState.isIncognitoMode && word.length >= 3) {
             // Voice Keyboard: a word left as typed was aimed at its own letters.
             dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.learnWord(word, word)
-            scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.saveIfDue() }
+            dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.learnRepairs(word)
+            scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.saveIfDue(); dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.save() }
         }
         val textBefore = content.textBeforeSelection.removeSuffix(word)
         nlpManager.learnFinishedWord(
@@ -820,6 +827,11 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         if (byUser && candidate is WordSuggestionCandidate) {
             // Voice Keyboard: any word picked from the strip counts toward the person's most-used words.
             nlpManager.countWordUse(candidate.text.toString())
+            if (!activeState.isIncognitoMode) {
+                val typed = editorInstance.activeContent.composingText
+                dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.learnWord(candidate.text.toString(), typed)
+                dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.learnRepairs(typed)
+            }
             if (candidate.isLearned) {
                 nlpManager.learnPickedWord(candidate.text.toString())
             }
@@ -1025,6 +1037,81 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
      */
     private data class AutoCorrection(val inserted: String, val replaced: String)
 
+    // ---- Voice Keyboard: fixes made by hand, anywhere in the last few dozen words --------------------
+
+    /** The last silent corrections, so changing one back is recognised as "not that" (see below). */
+    private val vkRecentAutoCorrections = ArrayDeque<AutoCorrection>()
+
+    /** Words around the cursor at the last word end (memory only, never stored). */
+    private var vkWindow: List<String>? = null
+    private var vkWindowApp: String? = null
+    private var vkWindowCutStart = false
+    private var vkWindowCutEnd = false
+
+    /**
+     * At each word end: compares the words around the cursor with those at the last word end and learns
+     * the ones the person fixed by hand ([dev.patrickgold.florisboard.ime.nlp.latin.EditDiffLearner]) —
+     * the word just typed or one a few words back. [finalWord] is what the word being finished turns into
+     * (an auto-correction), so the correction itself is not mistaken for a fix. Never in incognito or
+     * password fields, where the window is dropped.
+     */
+    private fun vkNoteEditWindow(finalWord: String?) {
+        if (activeState.isIncognitoMode || !nlpManager.wordSuggestionsWanted()) {
+            vkWindow = null
+            return
+        }
+        val content = editorInstance.activeContent
+        val composing = content.composingText
+        val rawBefore = content.textBeforeSelection
+        val before = when {
+            composing.isEmpty() -> rawBefore
+            rawBefore.endsWith(composing) -> rawBefore.removeSuffix(composing) + (finalWord ?: composing)
+            else -> { vkWindow = null; return } // the cursor is inside the word: wait for a cleaner moment
+        }
+        val after = content.textAfterSelection
+        val cutStart = before.length > VK_WINDOW_CHARS
+        val cutEnd = after.length > VK_WINDOW_CHARS
+        val tokens = dev.patrickgold.florisboard.ime.nlp.latin.EditDiffLearner.tokens(
+            before.takeLast(VK_WINDOW_CHARS) + " " + after.take(VK_WINDOW_CHARS),
+        )
+        val app = editorInstance.activeInfo.packageName
+        val prev = vkWindow
+        val prevCutStart = vkWindowCutStart
+        val prevCutEnd = vkWindowCutEnd
+        vkWindow = tokens
+        vkWindowCutStart = cutStart
+        vkWindowCutEnd = cutEnd
+        val sameField = app == vkWindowApp
+        vkWindowApp = app
+        if (prev == null || !sameField) return
+        val events = dev.patrickgold.florisboard.ime.nlp.latin.EditDiffLearner.events(
+            prev, tokens, cutStart = cutStart || prevCutStart, cutEnd = cutEnd || prevCutEnd,
+        )
+        if (events.isEmpty()) return
+        val model = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current()
+        for (e in events) {
+            when (e) {
+                is dev.patrickgold.florisboard.ime.nlp.latin.EditDiffLearner.Event.Fixed -> {
+                    // A silent correction changed back by hand: "not that", rather than a fix to learn.
+                    val undone = vkRecentAutoCorrections.lastOrNull {
+                        it.inserted.trim().equals(e.typo, ignoreCase = true) && it.replaced.trim().equals(e.fix, ignoreCase = true)
+                    }
+                    if (undone != null) {
+                        model.noteBlocked(e.fix, e.typo)
+                    } else {
+                        model.noteFix(e.typo, e.fix)
+                        model.noteConfusionsOf(e.typo, e.fix)
+                    }
+                }
+                is dev.patrickgold.florisboard.ime.nlp.latin.EditDiffLearner.Event.Split -> {
+                    model.noteFix(e.joined, e.first + " " + e.second)
+                    e.stray?.let { model.noteConfusion(it, ' ') }
+                }
+            }
+        }
+        scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.save() }
+    }
+
     private var pendingAutoCorrection: AutoCorrection? = null
 
     /**
@@ -1130,6 +1217,11 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         // otherwise reject it for certain — a word restored from a correction is one cheap edit from a
         // dictionary word by construction, which is exactly what that reasoning treats as a typo.
         val restored = correction.replaced.trim()
+        // Voice Keyboard: and never that correction again, for this person.
+        if (restored.isNotEmpty() && !activeState.isIncognitoMode) {
+            dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current().noteBlocked(restored, correction.inserted.trim())
+            scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.save() }
+        }
         if (restored.isNotEmpty()) {
             nlpManager.learnFinishedWord(
                 word = restored,
@@ -1239,6 +1331,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         // A pending snippet trigger is skipped for the same reason the space path skips it: there,
         // `expandSnippet` runs before `endOfWord` and the trigger never reaches the vocabulary (issue
         // #283). A shortcut somebody invented is not a word they typed.
+        vkNoteEditWindow(null)
         if (pendingSnippetTrigger() == null) offerFinishedWordForLearning()
         TouchTrace.reset() // word boundary (issue #242)
         val info = editorInstance.activeInfo
@@ -1275,6 +1368,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
      * learning as [handleEnter] does; no snippet expands, since this Enter is meant to run the line.
      */
     private fun handleEnterKeyPress() {
+        vkNoteEditWindow(null)
         if (pendingSnippetTrigger() == null) offerFinishedWordForLearning()
         TouchTrace.reset() // word boundary (issue #242)
         editorInstance.performEnterKeyPress()
@@ -2534,3 +2628,6 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         }
     }
 }
+
+/** Voice Keyboard: characters each side of the cursor compared for hand-made fixes. */
+private const val VK_WINDOW_CHARS = 400

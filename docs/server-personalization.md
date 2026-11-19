@@ -12,7 +12,8 @@ One keyboard profile per person, so it follows them to any device.
 - `POST vk/personal` with the whole profile as JSON → `200 {"ok": true, "updated_at": <unix seconds>}`.
   The server stores it as the person's current profile (replace). The app has already merged the
   server's copy into its own before posting, so the server does not need to merge.
-- Body up to about 2 MB; reject larger with `413`.
+- Body up to about 4 MB; reject larger with `413`. (A full profile is typically well under 1 MB, but can
+  approach 2 MB with the largest word-pair and fix lists.)
 - **Several devices per person.** When storing, set the profile's `updated_at` to the server's time (so
   `GET` returns it). A `POST` may carry `"if_updated_at": <updated_at from the GET it merged>`: if the
   stored profile's `updated_at` is different (another device saved in between), do not store and answer
@@ -42,6 +43,10 @@ Profile (format version 1; unknown fields must be kept or ignored, never rejecte
 - `dictionary`: [word, locale or null, shortcut or null], the personal dictionary.
 - `touch`: "s:" split / "n:" normal keyboard + letter → [x offset, y offset (key widths), samples].
 - `settings`: typing settings by name.
+- `fixes`: [typo, fix, count, last use], words the person changed by hand ("thw" → "the",
+  "thisbis" → "this is"); used automatically from 2 sightings.
+- `blocked`: [typed, wrong correction, time], auto-corrections the person took back.
+- `confusion`: {"b>v": count}, keys hit for another (typed > meant; a space is " ").
 
 This is everything the person types (outside incognito and password fields): treat it like messages.
 Store per person, never log the body, include it in `vk/export`, and delete it with `DELETE vk/data`.

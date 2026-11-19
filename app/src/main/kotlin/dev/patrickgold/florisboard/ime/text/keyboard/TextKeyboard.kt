@@ -70,7 +70,8 @@ class TextKeyboard(
         if (w <= 0f) return unchanged
         val near = ArrayList<TextKey>(8)
         for (key in keys()) {
-            if (!key.isVkLetterKey()) continue
+            // Letters and the space bar: a space bar this person tends to hit high is one of them.
+            if (!key.isVkLetterKey() && key.computedData.code != ' '.code) continue
             val c = key.visibleBounds.center
             if (abs(c.x - x) <= 1.6f * w && abs(c.y - y) <= 1.6f * w) near.add(key)
         }
