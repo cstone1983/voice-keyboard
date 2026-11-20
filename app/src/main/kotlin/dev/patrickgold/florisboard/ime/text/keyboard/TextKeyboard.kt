@@ -79,10 +79,14 @@ class TextKeyboard(
         if (near.size < 2 || hit < 0) return unchanged
         val chars = CharArray(near.size) { near[it].computedData.code.toChar() }
         val centers = FloatArray(near.size * 2)
+        // Where each key is drawn: its place plus the reshaping shift, if keys are reshaped.
+        val drawn = dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.visualOffsets.value
+        val prefix = if (isVkSplit) "s:" else "n:"
         for (i in near.indices) {
             val c = near[i].visibleBounds.center
-            centers[i * 2] = c.x / w
-            centers[i * 2 + 1] = c.y / w
+            val shift = drawn[prefix + chars[i].lowercaseChar()]
+            centers[i * 2] = c.x / w + (shift?.get(0) ?: 0f)
+            centers[i * 2 + 1] = c.y / w + (shift?.get(1) ?: 0f)
         }
         val pick = dev.patrickgold.florisboard.ime.nlp.latin.TouchHabits.current()
             .pick(x / w, y / w, chars, centers, hit, isVkSplit)
@@ -90,6 +94,14 @@ class TextKeyboard(
         val b = near[pick].touchBounds
         return x.coerceIn(b.left + 1f, b.right - 1f) to y.coerceIn(b.top + 1f, b.bottom - 1f)
     }
+
+    /**
+     * Voice Keyboard: where a touch is recorded as having landed, for autocorrect and for learning touch
+     * habits — after the split correction but *before* the habit correction. Recording the habit-corrected
+     * point made the habits feed on themselves: a tap read as the neighbouring key was stored at that
+     * key's edge, which pushed its learned aim further the same way, round after round.
+     */
+    fun vkTracePoint(pointerX: Float, pointerY: Float): Pair<Float, Float> = vkSplitCorrectedPoint(pointerX, pointerY)
 
     private fun vkSplitCorrectedPoint(pointerX: Float, pointerY: Float): Pair<Float, Float> {
         val unchanged = pointerX to pointerY

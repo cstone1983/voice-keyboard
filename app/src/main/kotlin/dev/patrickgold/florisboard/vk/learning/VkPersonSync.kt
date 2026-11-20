@@ -278,7 +278,8 @@ object VkPersonSync {
                     })
                 })
             }
-            touch?.let { runCatching { put("touch", Json.parseToJsonElement(it).jsonObject) } }
+            // "touch2": touch habits from real landing points; the old "touch" is dropped (see TouchHabits).
+            touch?.let { runCatching { put("touch2", Json.parseToJsonElement(it).jsonObject) } }
             fixes?.let { m ->
                 put("fixes", buildJsonArray {
                     for ((k, e) in m) add(buildJsonArray {
@@ -357,7 +358,7 @@ object VkPersonSync {
                 }
                 return Parsed(
                     words, learned, pairs, dictionary, settings,
-                    touch = (obj["touch"] as? JsonObject)?.toString(),
+                    touch = (obj["touch2"] as? JsonObject)?.toString(),
                     updatedAt = (obj["updated_at"] as? JsonPrimitive)?.longOrNull ?: 0L,
                     fixes = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixCodec.readFixes(obj["fixes"])?.mapValues { (_, f) -> ProfileMerge.Counted(f.fix, f.count, f.lastUsed) },
                     blocked = dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixCodec.readBlocked(obj["blocked"])?.mapValues { (k, _) -> ProfileMerge.DictWord(k, null, null) },

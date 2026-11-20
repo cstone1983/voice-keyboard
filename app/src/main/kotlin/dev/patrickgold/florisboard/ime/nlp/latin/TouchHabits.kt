@@ -31,7 +31,13 @@ class TouchHabitModel {
 
     /** Learns from one finished word: [intended] letters, [points] the taps (`x0,y0,x1,y1…`, key widths). */
     @Synchronized
-    fun learn(intended: String, points: FloatArray, layout: KeyProximityInfo.Layout, split: Boolean) {
+    fun learn(
+        intended: String,
+        points: FloatArray,
+        layout: KeyProximityInfo.Layout,
+        split: Boolean,
+        drawnShift: (Char) -> FloatArray? = { null },
+    ) {
         if (intended.length < 2 || points.size != intended.length * 2) return
         for (i in intended.indices) {
             val c = intended[i].lowercaseChar()
@@ -42,8 +48,10 @@ class TouchHabitModel {
             if (px.isNaN() || py.isNaN()) continue
             val idx = layout.indexOf(c)
             if (idx < 0) continue
-            val dx = px - layout.xAt(idx)
-            val dy = py - layout.yAt(idx)
+            // Relative to where the key is drawn: a reshaped key must not teach its own reshaping.
+            val shift = drawnShift(c)
+            val dx = px - layout.xAt(idx) - (shift?.get(0) ?: 0f)
+            val dy = py - layout.yAt(idx) - (shift?.get(1) ?: 0f)
             // Further than a key and a bit from the key meant: not an aim, a different word.
             if (dx * dx + dy * dy > MAX_SAMPLE_DIST * MAX_SAMPLE_DIST) continue
             val e = keys.getOrPut(keyOf(split, c)) { FloatArray(3) }
@@ -57,13 +65,21 @@ class TouchHabitModel {
 
     /** Learns one tap at ([x], [y]) (key widths) that was meant for [meant] (a backspaced-over slip). */
     @Synchronized
-    fun learnTap(meant: Char, x: Float, y: Float, layout: KeyProximityInfo.Layout, split: Boolean) {
+    fun learnTap(
+        meant: Char,
+        x: Float,
+        y: Float,
+        layout: KeyProximityInfo.Layout,
+        split: Boolean,
+        drawnShift: (Char) -> FloatArray? = { null },
+    ) {
         val c = meant.lowercaseChar()
         if (!c.isLetter() && c != ' ') return
         val idx = layout.indexOf(c)
         if (idx < 0 || x.isNaN() || y.isNaN()) return
-        val dx = x - layout.xAt(idx)
-        val dy = y - layout.yAt(idx)
+        val shift = drawnShift(c)
+        val dx = x - layout.xAt(idx) - (shift?.get(0) ?: 0f)
+        val dy = y - layout.yAt(idx) - (shift?.get(1) ?: 0f)
         if (dx * dx + dy * dy > MAX_SAMPLE_DIST * MAX_SAMPLE_DIST) return
         val e = keys.getOrPut(keyOf(split, c)) { FloatArray(3) }
         // A slip says more than a hit: it counts as two samples.
@@ -140,14 +156,14 @@ class TouchHabitModel {
     }
 
     companion object {
-        const val MIN_SAMPLES = 8f
+        const val MIN_SAMPLES = 12f
         /** Old samples fade: the mean is over roughly the last this many. */
         const val WINDOW = 60f
-        const val MAX_SHIFT_X = 0.35f
-        const val MAX_SHIFT_Y = 0.30f
+        const val MAX_SHIFT_X = 0.30f
+        const val MAX_SHIFT_Y = 0.22f
         private const val MAX_SAMPLE_DIST = 1.2f
         /** Squared key widths the learned key must be nearer by before it overrides the key hit. */
-        private const val MIN_GAIN = 0.02f
+        private const val MIN_GAIN = 0.06f
         private val ENTRY = Regex("\"([sn]:.)\":\\[(-?[0-9.]+),(-?[0-9.]+),([0-9.]+)]")
 
         fun keyOf(split: Boolean, c: Char) = (if (split) "s:" else "n:") + c
@@ -155,7 +171,7 @@ class TouchHabitModel {
     }
 }
 
-/** The app's [TouchHabitModel] for the selected person, saved in `files/vk_learning/touch_<hash>.json`. */
+/** The app's [TouchHabitModel] for the selected person, saved in `files/vk_learning/touch2_<hash>.json` (v2: the v1 data learned from habit-corrected points and is not used). */
 object TouchHabits {
     private val prefs by dev.patrickgold.florisboard.app.FlorisPreferenceStore
     @Volatile private var dir: File? = null
@@ -190,6 +206,10 @@ object TouchHabits {
      */
     private val _visualOffsets = kotlinx.coroutines.flow.MutableStateFlow<Map<String, FloatArray>>(emptyMap())
     val visualOffsets: kotlinx.coroutines.flow.StateFlow<Map<String, FloatArray>> = _visualOffsets
+
+    /** The drawn shift of [c]'s key now, in key widths (null when keys are not reshaped). */
+    fun drawnShiftOf(c: Char, split: Boolean): FloatArray? =
+        _visualOffsets.value[(if (split) "s:" else "n:") + c.lowercaseChar()]
 
     fun reshapeEnabled(): Boolean = prefs.keyboard.vkReshapeKeys.get() && enabled()
 
@@ -233,7 +253,8 @@ object TouchHabits {
         val m = current()
         val fixes = PersonalFixes.current()
         for (r in repairs) {
-            if (enabled() && layout != null) m.learnTap(r.meant, r.x, r.y, layout, lastSplit)
+            val split = lastSplit
+            if (enabled() && layout != null) m.learnTap(r.meant, r.x, r.y, layout, split) { c -> drawnShiftOf(c, split) }
             fixes.noteConfusion(r.tapped, r.meant)
         }
     }
@@ -247,7 +268,8 @@ object TouchHabits {
         if (!enabled() || intended.length != typed.length) return
         val pts = TouchTrace.pointsFor(typed) ?: return
         val layout = KeyProximityInfo.snapshot() ?: return
-        current().learn(intended, pts, layout, lastSplit)
+        val split = lastSplit
+        current().learn(intended, pts, layout, split) { c -> drawnShiftOf(c, split) }
     }
 
     /** The selected person's model (loads it when the person changed). */
@@ -295,5 +317,5 @@ object TouchHabits {
     fun unassignedJson(): String =
         runCatching { fileFor("default")?.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
 
-    private fun fileFor(who: String): File? = dir?.let { File(it.apply { mkdirs() }, "touch_$who.json") }
+    private fun fileFor(who: String): File? = dir?.let { File(it.apply { mkdirs() }, "touch2_$who.json") }
 }

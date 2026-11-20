@@ -255,6 +255,23 @@ Never in incognito or password fields; only words and letter pairs are kept, tex
 9. Settings → Voice Keyboard → Progress, learned words, privacy → "Fixes learned from your typing" lists
    fixes, blocked corrections and the most mixed-up keys, each removable.
 
+## Review of mistake learning after a day of use (2026-11-20)
+
+From the synced profile: 23 folded / 17 split keys learned, 42 fixes, 45 key mix-ups. Three problems:
+
+1. **Touch habits fed on themselves.** The trace stored the habit-corrected point (clamped to the edge of
+   the key the habit picked), so every reroute pushed that key's aim further the same way, and reshaped
+   keys added to it (people aim at the drawn key). Many keys sat at the caps; top-row aims low, home-row
+   aims high. Fix: the trace records the split-corrected but not habit-corrected point
+   (`TextKeyboard.vkTracePoint`); samples are taken relative to where the key is *drawn*; aim points add the
+   drawn shift; stricter limits (12 samples, 0.30/0.22 caps, gain 0.06); fresh data (`touch2_` files,
+   profile section `touch2`; the old `touch` is dropped). Reshaped keys off by default (`vk__reshape_keys_v2`).
+2. **Made-up fixes** ("dr" → "de"): the text window joined the two sides of the cursor with a space, which
+   split the word under the cursor. Now joined as is.
+3. **Fixes of real words** ("do" → "so") led the strip. A learned fix is now used only when the typed word
+   is not a word and every word of the fix is known (dictionary or personal); automatic from 2 sightings and
+   3 letters.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

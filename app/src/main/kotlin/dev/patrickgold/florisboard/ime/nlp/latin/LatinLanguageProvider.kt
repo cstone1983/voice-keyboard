@@ -1852,8 +1852,20 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
         // Voice Keyboard: the person's own fix for exactly this word ("thw" → "the", "thisbis" → "this is"),
         // learned from them changing it by hand. First in the strip; applied by Space once seen
         // [PersonalFixModel.AUTO_AFTER] times, and only when the typed word is not a word of its own.
+        // Only for a typed word that is not a word itself ("do" is never "fixed" to "so", whatever was
+        // changed by hand once), and only to words the dictionary or the person's own vocabulary knows,
+        // which also keeps out anything a half-word edit left behind.
         val fixModel = PersonalFixes.current()
-        val learnedFix = if (word.length >= 2) fixModel.fixFor(word) else null
+        val learnedFix = if (word.length >= 2 && !isKnown) {
+            fixModel.fixFor(word)?.takeIf { f ->
+                f.fix.split(' ').all { part ->
+                    val key = index.fold(part)
+                    part.isNotEmpty() && (index.freq.containsKey(key) || userVocabulary?.byFold?.containsKey(key) == true)
+                }
+            }
+        } else {
+            null
+        }
         if (learnedFix != null) {
             val text = cased(learnedFix.fix)
             out.putIfAbsent(
@@ -1861,7 +1873,7 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
                 WordSuggestionCandidate(
                     text = text,
                     confidence = 1.0,
-                    isEligibleForAutoCommit = autoCorrectOn && learnedFix.count >= PersonalFixModel.AUTO_AFTER && !isKnown,
+                    isEligibleForAutoCommit = autoCorrectOn && learnedFix.count >= PersonalFixModel.AUTO_AFTER && word.length >= 3,
                     sourceProvider = this,
                     isLearned = true,
                 ),

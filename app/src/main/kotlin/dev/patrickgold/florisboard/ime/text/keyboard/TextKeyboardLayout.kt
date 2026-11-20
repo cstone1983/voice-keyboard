@@ -712,8 +712,8 @@ private class TextKeyboardLayoutController(
             // decodes from these coordinates, so a tap halfway between two keys stays distinguishable from a
             // dead-centre one. Consumed when the resulting character reaches the editor.
             if (key.computedData.type == KeyType.CHARACTER) {
-                // Voice Keyboard: the corrected point on a split keyboard, the same one that chose the key.
-                val (tapX, tapY) = keyboard.vkCorrectedPoint(event.getX(pointer.index), event.getY(pointer.index))
+                // Voice Keyboard: where the touch landed (split-corrected, not habit-corrected; see vkTracePoint).
+                val (tapX, tapY) = keyboard.vkTracePoint(event.getX(pointer.index), event.getY(pointer.index))
                 TouchTrace.pendingTap(tapX, tapY)
             }
             pointer.pressedKeyInfo = inputEventDispatcher.sendDown(

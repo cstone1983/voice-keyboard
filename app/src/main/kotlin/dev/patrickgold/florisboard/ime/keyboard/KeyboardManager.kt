@@ -1072,7 +1072,9 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         val cutStart = before.length > VK_WINDOW_CHARS
         val cutEnd = after.length > VK_WINDOW_CHARS
         val tokens = dev.patrickgold.florisboard.ime.nlp.latin.EditDiffLearner.tokens(
-            before.takeLast(VK_WINDOW_CHARS) + " " + after.take(VK_WINDOW_CHARS),
+            // The two sides are one text: joined as they are. (A space here split the word under the
+            // cursor in two, and that came back as made-up "fixes" like "dr" → "de".)
+            before.takeLast(VK_WINDOW_CHARS) + after.take(VK_WINDOW_CHARS),
         )
         val app = editorInstance.activeInfo.packageName
         val prev = vkWindow

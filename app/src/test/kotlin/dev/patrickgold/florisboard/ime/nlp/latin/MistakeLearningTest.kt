@@ -128,10 +128,10 @@ class MistakeLearningTest {
     fun `a slip tap moves the key's aim point`() {
         val layout = KeyProximityInfo.Layout(intArrayOf('v'.code, 'b'.code, ' '.code), floatArrayOf(4f, 5f, 5f), floatArrayOf(2f, 2f, 3f))
         val m = TouchHabitModel()
-        repeat(4) { m.learnTap('v', 4.4f, 2f, layout, split = false) } // 8 samples
-        assertEquals(0.4f, assertNotNull(m.offsetOf('v', false))[0].coerceAtMost(0.4f), 0.06f)
+        repeat(6) { m.learnTap('v', 4.4f, 2f, layout, split = false) } // 12 samples
+        assertEquals(TouchHabitModel.MAX_SHIFT_X, assertNotNull(m.offsetOf('v', false))[0], 1e-4f)
         // The space bar is learned too.
-        repeat(4) { m.learnTap(' ', 5f, 2.7f, layout, split = false) }
+        repeat(6) { m.learnTap(' ', 5f, 2.7f, layout, split = false) }
         assertNotNull(m.offsetOf(' ', false))
     }
 }

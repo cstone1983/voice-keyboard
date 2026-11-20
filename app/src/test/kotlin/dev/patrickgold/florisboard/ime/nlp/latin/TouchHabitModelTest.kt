@@ -31,10 +31,10 @@ class TouchHabitModelTest {
     @Test
     fun `an offset is used only after enough samples`() {
         val m = TouchHabitModel()
-        m.teachV(0.3f, 3) // 6 samples
+        m.teachV(0.25f, 5) // 10 samples
         assertNull(m.offsetOf('v', split = true))
-        m.teachV(0.3f, 1) // 8
-        assertEquals(0.3f, assertNotNull(m.offsetOf('v', split = true))[0], 1e-4f)
+        m.teachV(0.25f, 1) // 12
+        assertEquals(0.25f, assertNotNull(m.offsetOf('v', split = true))[0], 1e-4f)
     }
 
     @Test
@@ -63,6 +63,14 @@ class TouchHabitModelTest {
         val far = TouchHabitModel()
         repeat(10) { far.learn("vv", floatArrayOf(1.9f, 0f, 1.9f, 0f), layout, split = true) }
         assertNull(far.offsetOf('v', true))
+    }
+
+    @Test
+    fun `a reshaped key does not teach its own reshaping`() {
+        val m = TouchHabitModel()
+        // The key is drawn 0.15 to the right and the person taps right on the drawn key: nothing to learn.
+        repeat(10) { m.learn("vv", floatArrayOf(0.15f, 0f, 0.15f, 0f), layout, split = true) { floatArrayOf(0.15f, 0f) } }
+        assertEquals(0f, assertNotNull(m.offsetOf('v', true))[0], 1e-4f)
     }
 
     @Test
