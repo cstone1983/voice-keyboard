@@ -15,15 +15,30 @@ fork of [FlorisBoard](https://github.com/florisboard/florisboard). Both are Apac
 - No Google Play Billing and no Dictate Cloud.
 - API keys are encrypted on the phone with the Android Keystore.
 - "Classic" themes with a familiar flat look (Material You colours by default), swipe typing on.
-- Built and signed by GitHub Actions; installed by sideloading.
+- Release builds are made and signed by [cstone1983/app-builder](https://github.com/cstone1983/app-builder);
+  the phone installs and updates them with Obtainium.
 
 Details, decisions and status: [docs/fork-notes.md](docs/fork-notes.md).
 
 ## Install
 
-Download `voice-keyboard.apk` from the newest
-[release](../../releases) and open it on the phone (allow installs from that app), or install over
-wireless debugging with `tools/install-latest.sh`.
+Installs and updates come through [Obtainium](https://github.com/ImranR98/Obtainium) from the
+[cstone1983/app-builder releases](https://github.com/cstone1983/app-builder/releases) titled
+"voice-keyboard <version>" (pre-releases; this repo no longer publishes its own):
+
+1. In Obtainium, add `https://github.com/cstone1983/app-builder`.
+2. Turn on "Include prereleases", and set the release title filter to `^voice-keyboard ` so only this
+   app's builds are picked up (the builder publishes other apps too).
+3. Install. Obtainium then offers each new build as an update.
+
+Versions are `<app version>.<builder run>` (e.g. `6.4.0.12`).
+
+**Coming from an older build of this repo** (`build-100xxxx`): those were signed with a different key,
+so Android will not update them. Sync your profile first (Settings → Voice Keyboard → Sync my profile
+now), uninstall the old app, then install from Obtainium; your words, fixes, touch habits and settings
+come back from your server after you scan its QR code again.
+
+Without Obtainium: `tools/install-latest.sh` installs the newest app-builder build over adb.
 
 ## Build
 
@@ -36,5 +51,10 @@ tools/bergamot/build-android.sh arm64-v8a  # offline translation library
 ./gradlew :app:assembleDebug
 ```
 
-Release signing reads an untracked `keystore.properties` (see `keystore.properties.template`); CI
-writes it from repository secrets. Never commit keys.
+`./gradlew :app:assembleRelease` builds an unsigned release APK when there is no `keystore.properties`;
+that is how app-builder builds it before signing it with the shared key. A local signed build can
+still read an untracked `keystore.properties` (see `keystore.properties.template`). Never commit keys.
+
+CI (`.github/workflows/build.yml`) runs the unit tests and the unsigned release build on every push and
+publishes nothing. `projectVersionName` must stay plain dotted numbers (e.g. `6.4.0`); the build
+refuses anything else.

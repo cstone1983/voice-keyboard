@@ -1,35 +1,29 @@
-name: Build APK
+name: CI
 
-# Builds the keyboard on every push. With the signing secrets set, it builds a signed release APK and
-# publishes it as a GitHub release (main / v* tags: "latest", other branches: pre-release). The latest
-# main build is always at
-#   https://github.com/<owner>/<repo>/releases/latest/download/voice-keyboard.apk
-# Without the secrets it builds a debug APK and only keeps it as a workflow artifact.
+# Builds and tests the keyboard on every push. It publishes nothing: release builds, signing and
+# the pre-releases phones install from (through Obtainium) live in cstone1983/app-builder, which
+# checks out this repo, runs the two native-library scripts below on a clean ubuntu-latest and then
+# builds :app:assembleRelease unsigned.
 #
-# Secrets (Settings > Secrets and variables > Actions):
-#   SIGNING_KEYSTORE_BASE64  base64 of the release keystore (.jks)
-#   SIGNING_STORE_PASSWORD   keystore password
-#   SIGNING_KEY_ALIAS        key alias
-#   SIGNING_KEY_PASSWORD     key password
+# So this job checks exactly that path still works: the native scripts run, :app:assembleRelease
+# builds with no keystore.properties (unsigned), and the unit tests pass.
 on:
   push:
     branches: [ main, "claude/**" ]
-    tags: [ "v*" ]
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    env:
-      HAS_SIGNING: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,7 +45,6 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
             "platforms;android-$API" "build-tools;$BT" "ndk;$NDK" "cmake;$CMAKE" > /dev/null
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Cache native libraries
         uses: actions/cache@v4
@@ -70,53 +63,21 @@ jobs:
             bash tools/bergamot/build-android.sh arm64-v8a
           fi
 
-      - name: Set up signing
-        if: env.HAS_SIGNING == 'true'
-        env:
-          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+      - name: Unit tests
+        run: ./gradlew --no-configuration-cache :app:testDebugUnitTest :lib:dictate-core:testDebugUnitTest
+
+      - name: Release build (unsigned, as app-builder builds it)
         run: |
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          {
-            echo "storeFile=$RUNNER_TEMP/release.jks"
-            echo "storePassword=$STORE_PASSWORD"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "keyPassword=$KEY_PASSWORD"
-          } > keystore.properties
+          test ! -e keystore.properties
+          ./gradlew --no-configuration-cache :app:assembleRelease
+          ls -l app/build/outputs/apk/release/
 
-      - name: Build
-        run: |
-          # versionCode grows with every CI run so a new APK always installs over the previous one.
-          VC=$((1000000 + GITHUB_RUN_NUMBER))
-          if [ "$HAS_SIGNING" = "true" ]; then TASK=:app:assembleRelease; else TASK=:app:assembleDebug; fi
-          ./gradlew --no-configuration-cache -PprojectVersionCode=$VC "$TASK"
-          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
-          mkdir -p out && cp "$APK" out/voice-keyboard.apk
-          echo "VERSION_CODE=$VC" >> "$GITHUB_ENV"
-
-      - name: Remove signing material
-        if: always()
-        run: rm -f keystore.properties "$RUNNER_TEMP/release.jks"
-
-      - uses: actions/upload-artifact@v4
+      - name: Keep test reports when tests fail
+        if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          name: voice-keyboard-${{ env.VERSION_CODE }}
-          path: out/voice-keyboard.apk
-
-      # main and v* tags become the "latest" release; other branches publish a pre-release (newest first in
-      # the release list), so a test build can be installed before it is merged.
-      - name: Publish release
-        if: env.HAS_SIGNING == 'true' && github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="build-${VERSION_CODE}"
-          FLAGS="--prerelease"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then TAG="${GITHUB_REF#refs/tags/}"; fi
-          if [[ "$GITHUB_REF" == refs/heads/main || "$GITHUB_REF" == refs/tags/v* ]]; then FLAGS="--latest"; fi
-          gh release create "$TAG" out/voice-keyboard.apk \
-            --title "Voice Keyboard $TAG" \
-            --notes "Built from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}." \
-            --target "$GITHUB_SHA" $FLAGS
+          name: test-reports
+          path: |
+            app/build/reports/tests
+            lib/dictate-core/build/reports/tests
+          if-no-files-found: ignore

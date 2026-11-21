@@ -22,13 +22,33 @@ REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 WORK="$HERE/build"
 SRC="$WORK/src"
 
-SDK="${ANDROID_HOME:-$(grep '^sdk.dir=' "$REPO_ROOT/local.properties" | cut -d= -f2)}"
+# The SDK: $ANDROID_HOME (set on GitHub's ubuntu-latest runners), $ANDROID_SDK_ROOT, or sdk.dir from
+# local.properties.
+SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+if [ -z "$SDK" ] && [ -f "$REPO_ROOT/local.properties" ]; then
+  SDK="$(grep '^sdk.dir=' "$REPO_ROOT/local.properties" | cut -d= -f2)"
+fi
+[ -n "$SDK" ] && [ -d "$SDK" ] || { echo "No Android SDK: set ANDROID_HOME (or sdk.dir in local.properties)." >&2; exit 1; }
 NDK_VERSION="$(grep '^ndk ' "$REPO_ROOT/gradle/tools.versions.toml" | sed -E 's/.*"(.*)".*/\1/')"
 CMAKE_VERSION="$(grep '^cmake ' "$REPO_ROOT/gradle/tools.versions.toml" | sed -E 's/.*"(.*)".*/\1/')"
 NDK="$SDK/ndk/$NDK_VERSION"
 CMAKE="$SDK/cmake/$CMAKE_VERSION/bin/cmake"
 NINJA="$SDK/cmake/$CMAKE_VERSION/bin/ninja"
 STRIP="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+
+# A clean machine (e.g. a fresh ubuntu-latest runner in cstone1983/app-builder) has an SDK but not
+# necessarily these exact NDK/CMake versions: install them with the SDK manager when it is there.
+missing=false
+for tool in "$CMAKE" "$NINJA" "$STRIP"; do [ -x "$tool" ] || missing=true; done
+if $missing; then
+  SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+  [ -x "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager || true)"
+  if [ -n "$SDKMANAGER" ]; then
+    echo "· Installing NDK $NDK_VERSION and CMake $CMAKE_VERSION …"
+    yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses > /dev/null 2>&1 || true
+    "$SDKMANAGER" --sdk_root="$SDK" --install "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION" > /dev/null
+  fi
+fi
 for tool in "$CMAKE" "$NINJA" "$STRIP"; do
   [ -x "$tool" ] || { echo "Missing $tool — install NDK $NDK_VERSION and CMake $CMAKE_VERSION via the SDK manager." >&2; exit 1; }
 done

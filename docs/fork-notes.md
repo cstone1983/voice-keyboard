@@ -14,8 +14,30 @@ is handled separately; this repo only needs its base URL and an API key, entered
 | 2026-11-14 | Encrypt API keys with the Android Keystore (AES-256-GCM) | Upstream stores them as plain text in settings. Keys copied to another device (backup/restore) cannot be decrypted there and must be entered again. |
 | 2026-11-14 | arm64-v8a only | One target phone; smaller APK. `-PallAbis=true` restores upstream's set. |
 | 2026-11-14 | New application id `io.github.cstone1983.voicekeyboard`, name "Voice Keyboard" | Installs next to Dictate if both are present; no personal data in the id. |
-| 2026-11-14 | Build and sign in GitHub Actions; signing key kept as repo secrets (key created on a home machine, root-only) | Key never in git or chat. Every CI build gets a growing versionCode so it installs over the previous one. |
-| 2026-11-14 | Install by sideloading: release download, or `tools/install-latest.sh` over wireless debugging from a computer on the phone's network | The cloud build session cannot reach the phone directly. |
+| 2026-11-14 | ~~Build and sign in GitHub Actions; signing key kept as repo secrets~~ (replaced 2026-11-21, below) | Key never in git or chat. |
+| 2026-11-14 | ~~Install by sideloading from this repo's releases~~ (replaced 2026-11-21, below) | The cloud build session cannot reach the phone directly. |
+| 2026-11-21 | **Release builds move to `cstone1983/app-builder`.** It checks out this repo, runs `tools/fetch-sherpa-onnx.sh` and `tools/bergamot/build-android.sh` on a clean ubuntu-latest, builds `:app:assembleRelease` unsigned (a Gradle init script drops every signingConfig and sets versionCode = 2000000 + builder run, versionName = `<projectVersionName>.<run>`), signs it with one shared release key and publishes pre-releases titled "voice-keyboard <version>" | One builder and one key for all of the user's apps. This repo's workflow is CI only (unit tests + unsigned release build) and publishes nothing. |
+| 2026-11-21 | **Installs and updates through Obtainium** from `cstone1983/app-builder` releases titled "voice-keyboard <version>" | Updates arrive on the phone without a computer. Obtainium compares versions numerically, hence plain `projectVersionName` (checked by the build). |
+
+## Releases and installs (since 2026-11-21)
+
+- **Where releases come from:** `cstone1983/app-builder`, pre-releases titled "voice-keyboard <version>",
+  version `<projectVersionName>.<builder run>` (e.g. 6.4.0.12), versionCode 2000000 + run.
+- **How the phone gets them:** Obtainium, tracking `cstone1983/app-builder`, filtered to release titles
+  starting "voice-keyboard". No computer or wireless debugging needed.
+- **What this repo must keep true** (the builder relies on it):
+  1. `projectVersionName` in `gradle.properties` is plain dotted numbers; the build fails otherwise
+     (`app/build.gradle.kts`), and the release build type adds no suffix.
+  2. `:app:assembleRelease` builds with no `keystore.properties` (it is then unsigned).
+  3. `tools/fetch-sherpa-onnx.sh` and `tools/bergamot/build-android.sh` run on a clean ubuntu-latest; the
+     Bergamot script installs its pinned NDK/CMake with the SDK manager when they are missing.
+  CI here checks all three on every push.
+- **Switching over:** the builder signs with a different key than the old `build-100xxxx` releases
+  of this repo (certificate `CN=Voice Keyboard`). Android does not update an app signed with another
+  key, so the first app-builder build needs the old app uninstalled once. Before that: sync the profile
+  (Voice Keyboard → Sync my profile now), so words, fixes, touch habits and settings come back from the
+  server; the server key has to be entered again (scan the server's QR code). The old releases and the
+  `SIGNING_*` secrets are left for the user to remove.
 
 ## Server setup code (QR)
 
@@ -284,9 +306,10 @@ From the synced profile: 23 folded / 17 split keys learned, 42 fixes, 45 key mix
 - Themes `classic_you_day/night` (Material You, default) and `classic_day/night` (fixed colours),
   generated from the FlorisBoard day stylesheet.
 - Defaults: swipe typing on, symbol hints off, Classic themes.
-- `.github/workflows/build.yml`: build, sign, publish releases. Upstream's funding, issue templates and
-  monthly-maintenance workflow removed.
-- `tools/install-latest.sh`: install the newest release over adb.
+- `.github/workflows/build.yml`: CI only since 2026-11-21 — native libraries, unit tests, unsigned
+  `:app:assembleRelease`. No signing, no releases (see "Releases and installs"). Upstream's funding,
+  issue templates and monthly-maintenance workflow removed.
+- `tools/install-latest.sh`: install the newest app-builder release over adb (for a phone without Obtainium).
 - Own server first: setup's main card is "Your own server" (`app/setup/OwnServerSetup.kt`: QR scan,
   paste, address + key, health check, model pickers, save); the same form is in Settings → AI providers
   → "Connect your own server" (`DictateOwnServerScreen`). Uses `com.google.zxing:core` (Apache-2.0).
@@ -300,7 +323,8 @@ Phase 1 (MVP keyboard) in progress:
 - [x] API key encryption
 - [x] Classic themes and defaults
 - [x] CI workflow; signing secrets set; first signed pre-release `build-1000002` (2026-11-14),
-      certificate `CN=Voice Keyboard`, SHA-256 `DB:F6:6A:11:...:D9:4F`
+      certificate `CN=Voice Keyboard`, SHA-256 `DB:F6:6A:11:...:D9:4F` (superseded 2026-11-21: releases
+      now come from cstone1983/app-builder, signed with its shared key)
 - [ ] First signed build installed on the phone and checked
 - [ ] Settings check against the plan: server URL + key, models, language, hold-to-talk / toggle,
       silence auto-stop, auto-send, cleanup on/off, cleanup presets ("clean up", "formal", "casual",

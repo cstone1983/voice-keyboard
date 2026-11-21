@@ -34,13 +34,13 @@ val projectTargetSdk: String by project
 val projectCompileSdk: String by project
 val projectVersionCode: String by project
 val projectVersionName: String by project
-val projectVersionNameSuffix = projectVersionName.substringAfter("-", "").let { suffix ->
-    if (suffix.isNotEmpty()) {
-        "-$suffix"
-    } else {
-        suffix
-    }
+// Voice Keyboard: release builds come from cstone1983/app-builder, which sets versionName to
+// "<projectVersionName>.<run>" and lets Obtainium compare versions numerically, so the name must be
+// plain dotted numbers. Fail here, with a clear message, rather than in the builder.
+check(Regex("""\d+(\.\d+)*""").matches(projectVersionName)) {
+    "projectVersionName must be plain dotted numbers like 6.4.0 (no suffix), got \"$projectVersionName\""
 }
+val projectVersionNameSuffix = ""
 
 kotlin {
     compilerOptions {
@@ -118,8 +118,9 @@ configure<ApplicationExtension> {
 
     // Release signing. Credentials live in a local, untracked `keystore.properties` at the repo root
     // (see keystore.properties.template) so the keystore/passwords never get committed. When the file
-    // is absent (e.g. on CI without secrets, or a contributor's machine) the release build simply has
-    // no signing config attached and falls back to an unsigned build, exactly as before.
+    // is absent the release build has no signing config and produces an unsigned APK. That is the
+    // normal case now: cstone1983/app-builder builds :app:assembleRelease unsigned (its init script also
+    // drops any signingConfig) and signs it with the shared release key; CI here builds it unsigned too.
     //
     // IMPORTANT: For uploads to Google Play this must be the *upload key* the existing
     // net.devemperor.dictate listing expects (the old Java app's key) — a fresh key gets rejected.
@@ -159,7 +160,7 @@ configure<ApplicationExtension> {
         }
 
         named("release") {
-            versionNameSuffix = projectVersionNameSuffix
+            // No suffix: the release versionName stays plain numbers (see the check at the top).
 
             if (keystoreProps != null) {
                 signingConfig = signingConfigs.getByName("release")
