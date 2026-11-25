@@ -70,7 +70,7 @@ object VkVocabularyHint {
             .map { it.value }
             .toList()
 
-    /** "Tyler, Proxmox, Stoneyshome." — at most [MAX_WORDS] words and [MAX_CHARS] characters. */
+    /** "Tyler, Proxmox, Example." — at most [MAX_WORDS] words and [MAX_CHARS] characters. */
     internal fun build(words: List<String>): String {
         val sb = StringBuilder()
         for (w in words.take(MAX_WORDS)) {

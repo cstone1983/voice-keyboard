@@ -551,6 +551,8 @@ object VkLearning {
         val styleExamples: List<String>,
         /** Words the cleanup keeps adding that the user removes. */
         val cleanupAvoid: List<String> = emptyList(),
+        /** Short endings Whisper keeps adding that the person keeps deleting ("Kama."), see VkCleanup.dropEndings. */
+        val dropEndings: List<String> = emptyList(),
     )
 
     @Volatile private var currentApp: String = ""
@@ -619,8 +621,13 @@ object VkLearning {
             .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { s -> s.isNotBlank() } }
         val examples = (obj["style_examples"] as? JsonArray).orEmpty()
             .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { s -> s.isNotBlank() } }
-        return Profile(str("version"), str("whisper_prompt"), reps, str("cleanup_style"), examples.take(3), avoid)
+        val endings = (obj["drop_endings"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { s -> s.isNotBlank() && s.length <= 60 } }
+        return Profile(str("version"), str("whisper_prompt"), reps, str("cleanup_style"), examples.take(3), avoid, endings)
     }
+
+    /** Strips the endings this person keeps deleting from a transcription (see [VkCleanup.dropEndings]). */
+    fun dropEndings(text: String): String = VkCleanup.dropEndings(text, profile()?.dropEndings.orEmpty())
 
     /** Learned fix rules, applied to a transcription before cleanup: whole words, case kept. */
     fun applyReplacements(text: String): String {

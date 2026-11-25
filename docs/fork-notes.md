@@ -320,7 +320,11 @@ mix-ups):
 4. Key mix-ups are consistent (s>d 24, o>i 15, e>r 14, b>v 11, r>e 10, m>n 9, u>i 9) and feed autocorrect.
    The new touch data (v2, real landing points) shows folded taps landing low on most keys (+0.2–0.4 key
    widths), which the touch habits now use.
-5. Server side (prompt in the chat): vocabulary and replacements learned from rewrites rather than
+5. Server side, done 2026-11-25: corrections only teach when before/after are similar (rewrites are
+   kept for stats only); learned vocabulary cleaned down to the genuine names; "avoid" never holds
+   everyday words; VAD filter on by default in models-merge; `drop_endings` in `GET vk/profile`. The
+   app strips those endings from each chunk and from the whole text (`VkCleanup.dropEndings`), only as
+   a sentence or clause of their own at the very end. Was, before the fix: vocabulary and replacements learned from rewrites rather than
    corrections ("Here is"→"Give me", "EventuallyYbe"), which then go into the Whisper prompt; "avoid" made
    of everyday words ("it", "for", "on") sent to the cleanup; Whisper adding a stray last word ("Kama.",
    "Kaaba.") that is deleted by hand every time.

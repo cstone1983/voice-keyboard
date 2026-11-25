@@ -2526,7 +2526,9 @@ object DictateController {
         dev.patrickgold.florisboard.vk.learning.VkLearning.noteRaw(rawText)
         dev.patrickgold.florisboard.vk.learning.VkLearning.noteAudio(appContext, capture?.audioFile)
         @Suppress("NAME_SHADOWING")
-        val rawText = dev.patrickgold.florisboard.vk.learning.VkLearning.applyReplacements(rawText).let { t ->
+        val rawText = dev.patrickgold.florisboard.vk.learning.VkLearning.applyReplacements(
+            dev.patrickgold.florisboard.vk.learning.VkLearning.dropEndings(rawText),
+        ).let { t ->
             if (prefs.dictate.activeInputLanguage.get().let { it.startsWith("en") || it == DictateLanguages.DETECT }) {
                 dev.patrickgold.florisboard.vk.learning.VkCleanup.spokenPunctuation(t)
             } else {
@@ -3449,6 +3451,15 @@ object DictateController {
                         // Whisper read its prompt back on a quiet chunk: not speech, drop it (lengths only).
                         Log.i(LATENCY_LOG_TAG, "phase=chunkEchoDropped index=$idx chars=${segment!!.text.length}")
                         segment = SegmentText("", segment!!.fallbackEngine)
+                    }
+                    // Voice Keyboard: an ending this person keeps deleting ("Kama."), added by Whisper at the
+                    // end of a chunk, is dropped here so it never lands in the middle of the text.
+                    segment?.let { seg ->
+                        val kept = dev.patrickgold.florisboard.vk.learning.VkLearning.dropEndings(seg.text)
+                        if (kept != seg.text) {
+                            Log.i(LATENCY_LOG_TAG, "phase=chunkEndingDropped index=$idx")
+                            segment = SegmentText(kept, seg.fallbackEngine)
+                        }
                     }
                     DictationTimings.addChunk(
                         DictationTimings.Chunk(

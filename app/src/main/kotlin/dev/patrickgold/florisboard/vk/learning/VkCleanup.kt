@@ -98,6 +98,35 @@ object VkCleanup {
         return out.replace(MARK, "").trim()
     }
 
+    /**
+     * Removes a short ending Whisper adds on its own and the person keeps deleting ("…about, Kama."),
+     * from the server's list for this person ([endings], learned from their deletions). Only as a
+     * sentence or clause of its own at the very end — after punctuation, or as the whole text — so a
+     * name that ends a real sentence ("I met Adam.") stays. A comma left in front becomes a full stop.
+     */
+    fun dropEndings(text: String, endings: List<String>): String {
+        if (endings.isEmpty() || text.isBlank()) return text
+        var out = text.trimEnd()
+        var changed = false
+        repeat(3) {
+            val before = out
+            for (e in endings) {
+                val m = Regex("(^|[.!?,;:…]\\s*)" + Regex.escape(e) + "[.!?,;:…\"'”’)]*$", RegexOption.IGNORE_CASE)
+                    .find(out) ?: continue
+                val sep = m.groupValues[1].trim()
+                out = out.substring(0, m.range.first).trimEnd() + when {
+                    sep.isEmpty() -> ""
+                    sep in listOf(",", ";", ":") -> "."
+                    else -> sep
+                }
+                changed = true
+                break
+            }
+            if (out == before) return@repeat
+        }
+        return if (changed) out.trim() else text
+    }
+
     /** Invisible marker for punctuation inserted by [spokenPunctuation]; removed before it returns. */
     private const val MARK = "\u0001"
 }

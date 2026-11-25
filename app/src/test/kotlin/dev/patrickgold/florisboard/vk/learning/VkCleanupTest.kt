@@ -63,4 +63,17 @@ class VkCleanupTest {
         assertEquals("Done.", VkCleanup.spokenPunctuation("Done, period"))
         assertEquals("Okay? Yes", VkCleanup.spokenPunctuation("Okay, question mark yes"))
     }
+
+    @Test
+    fun `endings the person keeps deleting are dropped, real sentences are not`() {
+        val e = listOf("Kama", "Kaaba", "is our ally, Adam")
+        assertEquals("Tell me about it.", VkCleanup.dropEndings("Tell me about it. Kama.", e))
+        assertEquals("Tell me about.", VkCleanup.dropEndings("Tell me about, Kama.", e))
+        assertEquals("That is wonderful.", VkCleanup.dropEndings("That is wonderful, Kaaba.", e))
+        assertEquals("We can do that.", VkCleanup.dropEndings("We can do that. Is our ally, Adam.", e))
+        assertEquals("", VkCleanup.dropEndings("Kama.", e))
+        // Part of a real sentence, or nothing learned: left alone.
+        assertEquals("I visited Kama.", VkCleanup.dropEndings("I visited Kama.", e))
+        assertEquals("See you. Kama.", VkCleanup.dropEndings("See you. Kama.", emptyList()))
+    }
 }

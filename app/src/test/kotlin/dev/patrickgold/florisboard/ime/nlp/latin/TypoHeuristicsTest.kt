@@ -50,7 +50,7 @@ class TypoHeuristicsTest {
 
     @Test
     fun `names, own words and real words are not`() {
-        for (w in listOf("proxmox", "homeassistant", "N8n", "jessy", "cloudflare", "keystore", "the", "have", "WH4E", "udm"))
+        for (w in listOf("proxmox", "homeassistant", "N8n", "tyler", "cloudflare", "keystore", "the", "have", "WH4E", "udm"))
             assertNull(slip(w), w)
     }
 }

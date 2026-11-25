@@ -20,9 +20,9 @@ class VkPersonalizationTest {
     @Test
     fun `vocabulary hint puts the most used words first and stays short`() {
         val uses = mapOf("Tyler" to 9.0, "Proxmox" to 3.0)
-        val ranked = VkVocabularyHint.rank(listOf("Proxmox", "jessy", "Tyler", "tyler", "a b", "me@x.com")) { uses[it] ?: 0.0 }
-        assertEquals(listOf("Tyler", "Proxmox", "jessy"), ranked)
-        assertEquals("Tyler, Proxmox, jessy.", VkVocabularyHint.build(ranked))
+        val ranked = VkVocabularyHint.rank(listOf("Proxmox", "morgan", "Tyler", "tyler", "a b", "me@x.com")) { uses[it] ?: 0.0 }
+        assertEquals(listOf("Tyler", "Proxmox", "morgan"), ranked)
+        assertEquals("Tyler, Proxmox, morgan.", VkVocabularyHint.build(ranked))
         val long = VkVocabularyHint.build((1..50).map { "Word$it" })
         assertTrue(long.length <= 181)
         assertEquals("", VkVocabularyHint.build(emptyList()))
