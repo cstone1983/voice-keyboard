@@ -67,6 +67,15 @@ class ScanCaptureActivity : ComponentActivity() {
         }
     }
 
+    private var pendingCameraUri: Uri? = null
+
+    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val uri = pendingCameraUri
+        if (granted && uri != null && runCatching { camera.launch(uri) }.isSuccess) return@registerForActivityResult
+        if (!granted) Toast.makeText(this, R.string.scan__no_camera, Toast.LENGTH_LONG).show()
+        finishWith(ScanStatus.FAILED)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sourcePackage = intent.getStringExtra(EXTRA_SOURCE_PACKAGE)
@@ -81,11 +90,18 @@ class ScanCaptureActivity : ComponentActivity() {
             return
         }
         val (_, uri) = prepared
+        pendingCameraUri = uri
         val launched = runCatching {
             if (intent.getBooleanExtra(EXTRA_PICK_EXISTING, false)) {
                 picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-            } else {
+            } else if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
                 camera.launch(uri)
+            } else {
+                // Voice Keyboard: the app declares CAMERA (live QR scanning), so the system camera may only
+                // be started once it is granted.
+                cameraPermission.launch(android.Manifest.permission.CAMERA)
             }
         }
         // Package visibility hides *queries*, not launches, so there is nothing to ask in advance —

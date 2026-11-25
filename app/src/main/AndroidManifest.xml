@@ -8,6 +8,10 @@
 
     <!-- Permission needed to record audio for Dictate voice transcription -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Voice Keyboard: the live QR scanner of the server setup (asked for when it is opened). Declaring it
+         means ACTION_IMAGE_CAPTURE needs it too, so the scan-text trampoline asks for it first. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
     <!-- Permissions needed to optionally route Dictate recording through a Bluetooth microphone
          and to manage audio focus / SCO routing while recording -->
@@ -301,8 +305,9 @@
              this one opens the system camera (or the photo picker) and leaves the image in the cache.
              NB: no android:noHistory, for the same reason as the trampoline above – the camera coming
              to the foreground would destroy it and its result would never arrive.
-             No CAMERA permission is declared anywhere in this manifest, and that is what makes the
-             feature possible: ACTION_IMAGE_CAPTURE is only gated on apps that declare it.
+             Voice Keyboard: CAMERA is declared now (live QR scanning in the server setup), and an app
+             that declares it may only start ACTION_IMAGE_CAPTURE once it is granted, so this activity
+             asks for it before opening the camera.
              android:taskAffinity="" is load-bearing and was learned the hard way: without it this
              activity joins the *settings app's* task, the camera stacks on top of that, and finishing
              brings the settings app forward instead of the app the user was typing in. They never got

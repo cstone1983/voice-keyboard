@@ -294,6 +294,14 @@ From the synced profile: 23 folded / 17 split keys learned, 42 fixes, 45 key mix
    is not a word and every word of the fix is known (dictionary or personal); automatic from 2 sightings and
    3 letters.
 
+## Live QR scanning in the server setup (2026-11-25)
+
+"Scan QR code" opens a full-screen camera view (`app/setup/QrCameraScanner.kt`, CameraX + ZXing, no
+Play services) that keeps looking until it sees the setup code. "QR image" (a screenshot or saved
+picture) stays. The app now declares CAMERA (asked for when the scanner opens), so the scan-text
+trampoline (`ScanCaptureActivity`) asks for it before starting the system camera, as Android requires
+for an app that declares it.
+
 ## Data review: predictions and corrections (2026-11-25)
 
 From the server (514 dictations, 236 messages, 57 dictation corrections) and the synced profile (2212

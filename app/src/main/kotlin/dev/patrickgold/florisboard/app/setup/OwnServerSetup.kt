@@ -62,7 +62,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
@@ -275,7 +274,6 @@ internal fun OwnServerSetup(
     // The QR's display name, for the person picked from the QR when the server's list is not available.
     var qrDisplayName by rememberSaveable { mutableStateOf<String?>(null) }
     var chatModel by rememberSaveable { mutableStateOf(existing?.chatModel.orEmpty()) }
-    var photoFile by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun normalizedUrl(): String = baseUrl.trim().let { if (it.isEmpty() || it.endsWith("/")) it else "$it/" }
 
@@ -374,23 +372,32 @@ internal fun OwnServerSetup(
         }
     }
 
-    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
-        val file = photoFile?.let(::File)
-        if (taken && file != null) {
-            handleImage(Uri.fromFile(file))
-        }
-    }
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) handleImage(uri)
     }
 
+    // Live camera scanning: keeps looking until it sees the code (the "QR image" button stays for a
+    // screenshot or a saved picture).
+    var showScanner by remember { mutableStateOf(false) }
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) showScanner = true
+        else error = "The camera is needed to scan. You can choose a QR image instead."
+    }
+
     fun startScan() {
-        // The cache folder the existing scan feature already shares with the camera app.
-        val dir = File(context.cacheDir, "scan-pending").apply { mkdirs() }
-        val file = File(dir, "server-qr.jpg").apply { delete() }
-        photoFile = file.absolutePath
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider.file", file)
-        runCatching { takePicture.launch(uri) }.onFailure { error = "No camera app available." }
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) showScanner = true else cameraPermission.launch(android.Manifest.permission.CAMERA)
+    }
+
+    if (showScanner) {
+        QrCameraScanner(
+            onResult = { text ->
+                showScanner = false
+                applyCode(text, "QR code")
+            },
+            onDismiss = { showScanner = false },
+        )
     }
 
     Card(modifier = Modifier.fillMaxWidth()) {

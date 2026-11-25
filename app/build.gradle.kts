@@ -276,6 +276,10 @@ dependencies {
     implementation(libs.mlkit.text.recognition)
     // Voice Keyboard: reads the server setup QR code from a photo (Apache-2.0, pure Java).
     implementation(libs.zxing.core)
+    // Voice Keyboard: live camera QR scanning for the server setup (CameraX, no Play services).
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
     implementation(libs.okhttp)
     implementation(libs.patrickgold.compose.tooltip)
     implementation(libs.patrickgold.jetpref.datastore.model)
