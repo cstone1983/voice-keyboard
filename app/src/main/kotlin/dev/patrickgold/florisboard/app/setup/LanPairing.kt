@@ -15,6 +15,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
@@ -115,7 +116,44 @@ object LanPairing {
             }.collect { results.add(it) }
         }
         // The timeout ends the search; whatever was found by then is in [results].
-        return synchronized(results) { results.toList() }.distinctBy { it.pairUrl }
+        val viaMdns = synchronized(results) { results.toList() }.distinctBy { it.pairUrl }
+        if (viaMdns.isNotEmpty()) return viaMdns
+        // mDNS does not cross from one home subnet to another (Wi-Fi on one, servers on another, joined
+        // by the router): then ask the names a home network usually gives a host called "voice".
+        return probe(FALLBACK_HOSTS.map { "http://$it:$DEFAULT_PORT/v1/" })
+    }
+
+    /** The common home-network names of the server, tried when mDNS finds nothing. */
+    private val FALLBACK_HOSTS = listOf("voice.localdomain", "voice.local", "voice.lan", "voice.home.arpa", "voice")
+    const val DEFAULT_PORT = 8080
+
+    /** Which of [pairUrls] answer the pairing info (each tried briefly, all at once). */
+    suspend fun probe(pairUrls: List<String>): List<Found> = withContext(Dispatchers.IO) {
+        val quick = client.newBuilder().connectTimeout(2, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS).build()
+        kotlinx.coroutines.coroutineScope { pairUrls.map { url ->
+            async {
+                runCatching {
+                    quick.newCall(Request.Builder().url(url + "vk/pair/info").get().build()).execute().use { r ->
+                        if (!r.isSuccessful) return@use null
+                        val o = Json.parseToJsonElement(r.body.string()).jsonObject
+                        Found(str(o, "name") ?: "Voice server", url)
+                    }
+                }.getOrNull()
+            }
+        }.mapNotNull { it.await() }.distinctBy { it.name } }
+    }
+
+    /** A typed address ("10.10.11.113", "voice.localdomain:8080", "http://…/v1/") as a pairing URL. */
+    fun pairUrlFrom(typed: String): String? {
+        var t = typed.trim().removeSuffix("/")
+        if (t.isEmpty()) return null
+        if (!t.startsWith("http://") && !t.startsWith("https://")) t = "http://$t"
+        val uri = runCatching { java.net.URI(t) }.getOrNull() ?: return null
+        val host = uri.host ?: return null
+        val port = if (uri.port > 0) uri.port else DEFAULT_PORT
+        val path = uri.path?.takeIf { it.isNotBlank() && it != "/" }?.trimEnd('/') ?: "/v1"
+        val h = if (host.contains(':') && !host.startsWith("[")) "[$host]" else host
+        return "${uri.scheme}://$h:$port$path/"
     }
 
     private fun get(url: String): JsonObject = client.newCall(Request.Builder().url(url).get().build()).execute().use { r ->

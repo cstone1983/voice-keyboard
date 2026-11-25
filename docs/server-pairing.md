@@ -10,6 +10,11 @@ neither uses nor syncs anything; it shows "Waiting for approval".
 - TXT record: `path=/v1/` (where the API is), optional `name=<display name>`.
 - The service name is shown in the app ("Voice server").
 
+If the phone's Wi-Fi and the server are on different subnets (joined by the router), mDNS does not reach
+the phone. The app then tries the usual home-network names of a host called `voice` (`voice.localdomain`,
+`voice.local`, `voice.lan`, `voice.home.arpa`, `voice`) on port 8080, and finally lets the user type the
+address. Alternatively the router can reflect mDNS between the subnets.
+
 ## 2. Pairing endpoints — home network only, no API key
 
 Reachable only from the LAN (refuse anything that came through the public tunnel / internet, e.g.

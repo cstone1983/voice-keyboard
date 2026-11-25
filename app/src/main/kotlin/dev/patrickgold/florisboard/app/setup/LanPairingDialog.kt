@@ -48,6 +48,7 @@ private sealed class Step {
     data object Requesting : Step()
     data class Waiting(val pending: LanPairing.Pending) : Step()
     data class Message(val text: String, val retry: Boolean) : Step()
+    data class Manual(val text: String) : Step()
 }
 
 /**
@@ -64,16 +65,16 @@ fun LanPairingDialog(onApproved: (setupCode: String, person: String?) -> Unit, o
     var chosen by remember { mutableStateOf<String?>(null) }   // person id, or null = new person
     var newName by remember { mutableStateOf("") }
     var device by remember { mutableStateOf(LanPairing.deviceName()) }
+    var address by remember { mutableStateOf("") }
 
     fun search() {
         step = Step.Searching
         scope.launch {
             val found = LanPairing.discover(context)
             step = when (found.size) {
-                0 -> Step.Message(
+                0 -> Step.Manual(
                     "No voice server found on this Wi-Fi. Make sure the phone is on the home network " +
-                        "(not mobile data or a guest network), or scan the server's QR code instead.",
-                    retry = true,
+                        "(not mobile data or a guest network), or enter the server's address on the home network.",
                 )
                 1 -> Step.Loading(found[0])
                 else -> Step.Pick(found)
@@ -196,6 +197,16 @@ fun LanPairingDialog(onApproved: (setupCode: String, person: String?) -> Unit, o
                         )
                     }
                     is Step.Message -> Text(s.text)
+                    is Step.Manual -> {
+                        Text(s.text)
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = address, onValueChange = { address = it.take(80) },
+                            label = { Text("Server address on the home network") },
+                            placeholder = { Text("e.g. 192.168.1.20 or voice.local") },
+                            singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         },
@@ -217,6 +228,13 @@ fun LanPairingDialog(onApproved: (setupCode: String, person: String?) -> Unit, o
                     },
                 ) { Text("Ask for access") }
                 is Step.Message -> if (s.retry) TextButton(onClick = { search() }) { Text("Try again") } else TextButton(onClick = onDismiss) { Text("OK") }
+                is Step.Manual -> TextButton(
+                    enabled = LanPairing.pairUrlFrom(address) != null,
+                    onClick = {
+                        val url = LanPairing.pairUrlFrom(address) ?: return@TextButton
+                        step = Step.Loading(LanPairing.Found("Voice server", url))
+                    },
+                ) { Text("Connect") }
                 else -> TextButton(onClick = onDismiss) { Text("Close") }
             }
         },
@@ -226,6 +244,8 @@ fun LanPairingDialog(onApproved: (setupCode: String, person: String?) -> Unit, o
                     LanPairing.savePending(context, null)
                     onDismiss()
                 }) { Text("Cancel request") }
+            } else if (step is Step.Manual) {
+                TextButton(onClick = { search() }) { Text("Search again") }
             } else if (step !is Step.Message) {
                 TextButton(onClick = onDismiss) { Text("Cancel") }
             }
