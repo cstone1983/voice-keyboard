@@ -58,6 +58,23 @@ class PersonalFixModel {
         changes++
     }
 
+    /** Times a correction was taken back and the typed word then kept (local; see [noteRejection]). */
+    internal val rejections = HashMap<String, Int>()
+
+    /**
+     * The person took the correction [typed] → [wrong] back and kept what they typed. Blocked from the
+     * [BLOCK_AFTER]th time: a backspace right after a correction is also how people delete the space
+     * or keep going, so one is not enough to say "never again".
+     */
+    @Synchronized
+    fun noteRejection(typed: String, wrong: String, nowSec: Long = now()) {
+        val k = key(typed.lowercase().trim(), wrong.lowercase().trim())
+        val n = (rejections[k] ?: 0) + 1
+        rejections[k] = n
+        changes++
+        if (n >= BLOCK_AFTER) noteBlocked(typed, wrong, nowSec)
+    }
+
     @Synchronized
     fun isBlocked(typed: String, wrong: String): Boolean = blocked.containsKey(key(typed.lowercase(), wrong.lowercase()))
 
@@ -107,10 +124,13 @@ class PersonalFixModel {
     fun removeFix(typo: String, fix: String) { fixes.remove(key(typo.lowercase(), fix.lowercase())); changes++ }
 
     @Synchronized
-    fun unblock(typed: String, wrong: String) { blocked.remove(key(typed.lowercase(), wrong.lowercase())); changes++ }
+    fun unblock(typed: String, wrong: String) {
+        val k = key(typed.lowercase(), wrong.lowercase())
+        blocked.remove(k); rejections.remove(k); changes++
+    }
 
     @Synchronized
-    fun clear() { fixes.clear(); blocked.clear(); confusion.clear(); changes++ }
+    fun clear() { fixes.clear(); blocked.clear(); confusion.clear(); rejections.clear(); changes++ }
 
     @Synchronized
     fun allFixes(): List<Fix> = fixes.values.sortedWith(compareByDescending<Fix> { it.count }.thenByDescending { it.lastUsed })
@@ -153,7 +173,12 @@ class PersonalFixModel {
             val (a, b) = split(k)
             sb.append('[').append(q(a)).append(',').append(q(b)).append(',').append(t).append(']')
         }
-        sb.append("],\"confusion\":{")
+        sb.append("],\"rejections\":{")
+        rejections.entries.forEachIndexed { i, (k, n) ->
+            if (i > 0) sb.append(',')
+            sb.append(q(k)).append(':').append(n)
+        }
+        sb.append("},\"confusion\":{")
         confusion.entries.forEachIndexed { i, (k, n) ->
             if (i > 0) sb.append(',')
             sb.append(q(k)).append(':').append(n)
@@ -169,6 +194,9 @@ class PersonalFixModel {
         PersonalFixCodec.readFixes(obj["fixes"])?.let { fixes.putAll(it) }
         PersonalFixCodec.readBlocked(obj["blocked"])?.let { blocked.putAll(it) }
         PersonalFixCodec.readConfusion(obj["confusion"])?.let { confusion.putAll(it) }
+        (obj["rejections"] as? kotlinx.serialization.json.JsonObject)?.forEach { (k, v) ->
+            (v as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()?.let { rejections[k] = it }
+        }
     }
 
     private fun prune() {
@@ -180,6 +208,8 @@ class PersonalFixModel {
     companion object {
         /** Sightings of the same fix before it is applied without asking. */
         const val AUTO_AFTER = 2
+        /** Takebacks of the same correction before it is never made again. */
+        const val BLOCK_AFTER = 2
         const val MAX_FIXES = 2000
         const val MAX_BLOCKED = 2000
         private const val CONFUSION_CAP = 1000

@@ -84,6 +84,8 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
         /** Voice Keyboard: joined words are offered when both are this common, applied from the next. */
         private const val SPLIT_MIN_FREQ = 150
         private const val SPLIT_AUTO_FREQ = 190
+        /** Voice Keyboard: how much more common a fix must be to override a dictionary word. */
+        private const val KNOWN_OVERRIDE_FREQ_GAP = 20
 
         // A prefix with more dictionary words than this is left to the plain completion walk (issue #381):
         // with over a thousand matches in ~64,000 words, the walk meets its eight within the first few
@@ -983,6 +985,61 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
     ).map { index.canonical[it] ?: it }
 
     /**
+     * Voice Keyboard: whether the person's own fix [f] for the dictionary word [word] should win over the
+     * dictionary (see the learned fixes in suggest()).
+     */
+    private fun overridesKnownWord(
+        word: String,
+        f: PersonalFixModel.Fix,
+        index: LowerIndex,
+        userVocabulary: UserVocabulary?,
+    ): Boolean {
+        if (f.count < PersonalFixModel.AUTO_AFTER) return false
+        val key = index.fold(word)
+        if (userVocabulary?.byFold?.containsKey(key) == true) return false
+        val typoFreq = index.freq[key] ?: 0
+        val fixFreq = f.fix.split(' ').minOf { index.freq[index.fold(it)] ?: 0 }
+        if (fixFreq < typoFreq + KNOWN_OVERRIDE_FREQ_GAP) return false
+        // Kept as typed far more often than fixed: then it is a word this person uses.
+        val uses = PersonalWords.current(appContext, prefs).scoreOf(word.lowercase())
+        return uses <= 3.0 * f.count + 2.0
+    }
+
+    /**
+     * Voice Keyboard: once per person and language, forgets what was learned from slips before the
+     * learning gate knew them ([TypoHeuristics]): learned words (and their personal-dictionary entries,
+     * when the keyboard promoted them) that are a finger-slip of a very common word, or that the person
+     * has a fix for; and "never correct this" blocks on such words, which stopped good corrections. A
+     * name or a word the person added by hand is not touched. Deletions reach the other devices through
+     * the profile sync.
+     */
+    private suspend fun forgetLikelySlips(subtype: Subtype) {
+        val lang = dictLangFor(subtype) ?: return
+        val index = lowerIndexForLang(lang)
+        if (index.freq.isEmpty()) return
+        val who = dev.patrickgold.florisboard.vk.learning.VkPersonFiles.personKey() ?: "default"
+        val fixes = PersonalFixes.current()
+        fun isSlip(w: String) = TypoHeuristics.likelySlipOf(w) { index.freq[it] } != null ||
+            fixes.fixFor(w)?.let { f -> f.fix.split(' ').all { index.freq.containsKey(index.fold(it)) } } == true
+        val forgotten = LearnedWordsStore.forgetOnce(appContext, lang, "vk_slips_v1_$who") { entry -> isSlip(entry.word) }
+            ?: return
+        val promoted = forgotten.filter { it.promoted }
+        if (promoted.isNotEmpty()) {
+            val dao = runCatching { DictionaryManager.default().florisUserDictionaryDao() }.getOrNull()
+            for (entry in promoted) {
+                runCatching { dao?.queryExactFuzzyLocale(entry.word, subtype.primaryLocale)?.forEach { dao.delete(it) } }
+            }
+            onPersonalVocabularyChanged()
+        }
+        var unblocked = 0
+        for ((typed, wrong) in fixes.allBlocked()) {
+            if (TypoHeuristics.likelySlipOf(typed) { index.freq[it] } != null) { fixes.unblock(typed, wrong); unblocked++ }
+        }
+        if (unblocked > 0) PersonalFixes.save()
+        flogInfo { "forgot ${forgotten.size} slip-learned $lang words (${promoted.size} promoted), unblocked $unblocked" }
+    }
+
+    /**
      * Voice Keyboard: the key distance the string readers use, made shorter for the pairs this person
      * mixes up ([PersonalFixModel.distanceFactor]), so their usual slips read as near ones.
      */
@@ -1370,6 +1427,7 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
             }
         }
         runCatching { forgetAccentlessLearnedWords(subtype) }
+        runCatching { forgetLikelySlips(subtype) }
         Unit
     }
 
@@ -1856,12 +1914,19 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
         // changed by hand once), and only to words the dictionary or the person's own vocabulary knows,
         // which also keeps out anything a half-word edit left behind.
         val fixModel = PersonalFixes.current()
-        val learnedFix = if (word.length >= 2 && !isKnown) {
+        //
+        // The bundled word list holds plenty of typo-shaped entries ("ans" 175, "amd" 186, "tne" 144,
+        // "csn" 128), which made exactly this person's commonest slips "known words" that nothing ever
+        // corrected — "ans" was fixed by hand 19 times. So a known word is overridden too, when the person
+        // has fixed it at least [PersonalFixModel.AUTO_AFTER] times, the fix is clearly more common, the
+        // word is not in their own dictionary, and they have not kept it far more often than fixed it.
+        val learnedFix = if (word.length >= 2) {
             fixModel.fixFor(word)?.takeIf { f ->
-                f.fix.split(' ').all { part ->
+                val fixKnown = f.fix.split(' ').all { part ->
                     val key = index.fold(part)
                     part.isNotEmpty() && (index.freq.containsKey(key) || userVocabulary?.byFold?.containsKey(key) == true)
                 }
+                fixKnown && (!isKnown || overridesKnownWord(word, f, index, userVocabulary))
             }
         } else {
             null
@@ -1873,7 +1938,8 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
                 WordSuggestionCandidate(
                     text = text,
                     confidence = 1.0,
-                    isEligibleForAutoCommit = autoCorrectOn && learnedFix.count >= PersonalFixModel.AUTO_AFTER && word.length >= 3,
+                    isEligibleForAutoCommit = autoCorrectOn && learnedFix.count >= PersonalFixModel.AUTO_AFTER &&
+                        (word.length >= 3 || learnedFix.count >= 3),
                     sourceProvider = this,
                     isLearned = true,
                 ),
@@ -2409,7 +2475,11 @@ class LatinLanguageProvider(context: Context) : SpellingProvider, SuggestionProv
                 beamCorrection = reading?.first,
                 beamCost = reading?.second,
                 nearestKnownFreq = EditDistance.nearestKnownFrequency(folded, index.alphabet, index.freq),
-            )
+            ) ||
+                // Voice Keyboard: a short word one finger-slip from one of the commonest words ("tbe",
+                // "nkt", "habe") is a typo, not a word to learn — the near-miss rule above only speaks
+                // from six letters up, and these were being promoted into the personal dictionary.
+                TypoHeuristics.likelySlipOf(trimmed) { index.freq[it] } != null
         }
         val mayLearn = WordLearningGate.shouldLearn(
             enabled = true,

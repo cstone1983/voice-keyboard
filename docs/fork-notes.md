@@ -294,6 +294,37 @@ From the synced profile: 23 folded / 17 split keys learned, 42 fixes, 45 key mix
    is not a word and every word of the fix is known (dictionary or personal); automatic from 2 sightings and
    3 letters.
 
+## Data review: predictions and corrections (2026-11-25)
+
+From the server (514 dictations, 236 messages, 57 dictation corrections) and the synced profile (2212
+counted words, 148 learned words, 4765 word pairs, 143 typing fixes, 53 blocked corrections, 127 key
+mix-ups):
+
+1. **Typos learned as words.** Most learned words were slips ("habe" ×9, "nkt", "tbe", "wotk", "wkth",
+   "oit"), and 8 of them had been promoted into the personal dictionary, after which autocorrect never
+   touched them. Two causes: the near-miss rule only speaks from six letters up, and a backspace right
+   after a correction learned the restored typo at double weight (two such and it was promoted).
+   Fixes: `TypoHeuristics.likelySlipOf` (one finger-slip — QWERTY neighbour, swap, doubled/extra
+   neighbour, missing letter — from a word ≥200) now also counts as a slip in the learning gate; the
+   undo is only learned once the restored word is still there at the next word end
+   (`KeyboardManager.vkConfirmPendingUndo`); a one-time sweep per person (`forgetLikelySlips`) forgets
+   slip-shaped learned words (and their dictionary entries) and words the person has a fix for.
+2. **Good corrections blocked.** 53 "never again" blocks, mostly on slips ("ansd"→"and", "nkt"→"not",
+   "arpund"→"around"), each from a single backspace. Now blocked only after two confirmed takebacks
+   (`PersonalFixModel.noteRejection`); the sweep lifts blocks on slips.
+3. **The word list holds typo-shaped words**, so the commonest slips were "known" and never corrected:
+   "ans" 175 (fixed by hand 19×), "foe" 182 (10×), "amd" 186, "tne" 144, "csn" 128, "thr" 153, "ca" 228,
+   "cam" 204, "yo" 220. A learned fix now overrides a dictionary word when fixed ≥2 times (≥3 for two
+   letters), the fix is ≥20 more common, the word is not in the personal dictionary and it was not kept
+   far more often than fixed.
+4. Key mix-ups are consistent (s>d 24, o>i 15, e>r 14, b>v 11, r>e 10, m>n 9, u>i 9) and feed autocorrect.
+   The new touch data (v2, real landing points) shows folded taps landing low on most keys (+0.2–0.4 key
+   widths), which the touch habits now use.
+5. Server side (prompt in the chat): vocabulary and replacements learned from rewrites rather than
+   corrections ("Here is"→"Give me", "EventuallyYbe"), which then go into the Whisper prompt; "avoid" made
+   of everyday words ("it", "for", "on") sent to the cleanup; Whisper adding a stray last word ("Kama.",
+   "Kaaba.") that is deleted by hand every time.
+
 ## Changes made (vs. upstream)
 
 - `app/build.gradle.kts`: application id; arm64-only by default; billing dependency removed.

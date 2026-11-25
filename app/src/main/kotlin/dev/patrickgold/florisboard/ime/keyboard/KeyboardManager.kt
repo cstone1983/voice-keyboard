@@ -748,6 +748,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
      * question.
      */
     private fun endOfWord(): SuggestionCandidate? {
+        vkConfirmPendingUndo()
         val candidate = nlpManager.getAutoCommitCandidate(editorInstance.activeContent.composingText)
         vkNoteEditWindow(candidate?.text?.toString())
         if (candidate != null) {
@@ -1039,6 +1040,33 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
 
     // ---- Voice Keyboard: fixes made by hand, anywhere in the last few dozen words --------------------
 
+    /** A correction undone by backspace, waiting for the next word end to say whether it was meant. */
+    private var vkPendingUndo: AutoCorrection? = null
+
+    /**
+     * The correction undone by the last backspace ([undoAutoCorrection]): if the restored word is still
+     * right before the cursor (the person typed on), it was meant — learn it as before and count the
+     * correction as taken back. If it is gone (deleted or retyped), forget about it.
+     */
+    private fun vkConfirmPendingUndo() {
+        val undo = vkPendingUndo ?: return
+        vkPendingUndo = null
+        val restored = undo.replaced.trim()
+        val content = editorInstance.activeContent
+        val before = content.textBeforeSelection.removeSuffix(content.composingText).trimEnd()
+        val last = before.takeLastWhile { !it.isWhitespace() }.trim { !it.isLetterOrDigit() }
+        if (!last.equals(restored, ignoreCase = true)) return
+        nlpManager.learnFinishedWord(
+            word = restored,
+            origin = WordOrigin.TYPED,
+            tapPoints = null,
+            weight = WordLearningGate.REJECTION_WEIGHT,
+            trustedByUser = true,
+        )
+        dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current().noteRejection(restored, undo.inserted.trim())
+        scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.save() }
+    }
+
     /** The last silent corrections, so changing one back is recognised as "not that" (see below). */
     private val vkRecentAutoCorrections = ArrayDeque<AutoCorrection>()
 
@@ -1099,7 +1127,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
                         it.inserted.trim().equals(e.typo, ignoreCase = true) && it.replaced.trim().equals(e.fix, ignoreCase = true)
                     }
                     if (undone != null) {
-                        model.noteBlocked(e.fix, e.typo)
+                        model.noteRejection(e.fix, e.typo)
                     } else {
                         model.noteFix(e.typo, e.fix)
                         model.noteConfusionsOf(e.typo, e.fix)
@@ -1219,20 +1247,12 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         // otherwise reject it for certain — a word restored from a correction is one cheap edit from a
         // dictionary word by construction, which is exactly what that reasoning treats as a typo.
         val restored = correction.replaced.trim()
-        // Voice Keyboard: and never that correction again, for this person.
-        if (restored.isNotEmpty() && !activeState.isIncognitoMode) {
-            dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.current().noteBlocked(restored, correction.inserted.trim())
-            scope.launch(Dispatchers.IO) { dev.patrickgold.florisboard.ime.nlp.latin.PersonalFixes.save() }
-        }
-        if (restored.isNotEmpty()) {
-            nlpManager.learnFinishedWord(
-                word = restored,
-                origin = WordOrigin.TYPED,
-                tapPoints = null,
-                weight = WordLearningGate.REJECTION_WEIGHT,
-                trustedByUser = true,
-            )
-        }
+        // Voice Keyboard: not learned here any more. A backspace right after a correction is just as often
+        // the start of deleting, or of retyping the word, and learning the typo from it put "habe" and
+        // "tbe" into the personal dictionary. It counts once the restored word is still standing at the
+        // next word end ([vkConfirmPendingUndo]): then it is learned, and the correction counts as taken
+        // back (never made again from the second time).
+        vkPendingUndo = if (restored.isNotEmpty() && !activeState.isIncognitoMode) correction else null
         lastTypedWord = null
         return true
     }
@@ -1333,6 +1353,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
         // A pending snippet trigger is skipped for the same reason the space path skips it: there,
         // `expandSnippet` runs before `endOfWord` and the trigger never reaches the vocabulary (issue
         // #283). A shortcut somebody invented is not a word they typed.
+        vkConfirmPendingUndo()
         vkNoteEditWindow(null)
         if (pendingSnippetTrigger() == null) offerFinishedWordForLearning()
         TouchTrace.reset() // word boundary (issue #242)
