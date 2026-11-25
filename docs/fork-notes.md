@@ -294,6 +294,15 @@ From the synced profile: 23 folded / 17 split keys learned, 42 fixes, 45 key mix
    is not a word and every word of the fix is known (dictionary or personal); automatic from 2 sightings and
    3 letters.
 
+## Wi-Fi setup with approval (2026-11-25)
+
+"Find my server on Wi-Fi" (`app/setup/LanPairing.kt`, `LanPairingDialog.kt`): finds the server by mDNS
+(`_voicekb._tcp`), lists its people (or "someone new"), asks for access for this person on this device,
+and waits while the owner approves or denies in Telegram. Only an approved request hands the app its
+own key (one per device, tied to the person), applied like a scanned QR code; until then the app shows
+"Waiting for approval" (setup screen and the Voice Keyboard page) and uses and syncs nothing. A waiting
+request is kept across screens for up to a day. Server contract: `docs/server-pairing.md`.
+
 ## Live QR scanning in the server setup (2026-11-25)
 
 "Scan QR code" opens a full-screen camera view (`app/setup/QrCameraScanner.kt`, CameraX + ZXing, no

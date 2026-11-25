@@ -74,7 +74,9 @@ fun VkHubScreen() = FlorisScreen {
             Preference(
                 icon = Icons.Default.Dns,
                 title = if (active != null) "Server" else "Connect your own server",
-                summary = if (active != null) {
+                summary = if (dev.patrickgold.florisboard.app.setup.LanPairing.loadPending(context) != null) {
+                    "Waiting for approval of the Wi-Fi setup (check Telegram). Not used or synced until then."
+                } else if (active != null) {
                     listOfNotNull(
                         signedIn.takeIf { it.isNotBlank() }?.let { "Signed in as ${VkLearning.displayName(it)}" },
                         active.customBaseUrl.removePrefix("https://").removePrefix("http://").substringBefore('/'),

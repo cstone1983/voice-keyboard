@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -390,6 +391,19 @@ internal fun OwnServerSetup(
         if (granted) showScanner = true else cameraPermission.launch(android.Manifest.permission.CAMERA)
     }
 
+    // Setup from the home Wi-Fi: find the server, ask for access, wait for the owner's approval.
+    var showPairing by remember { mutableStateOf(false) }
+    val pendingPairing = remember(showPairing) { LanPairing.loadPending(context) }
+    if (showPairing) {
+        LanPairingDialog(
+            onApproved = { setupCode, _ ->
+                showPairing = false
+                applyCode(setupCode, "Wi-Fi setup")
+            },
+            onDismiss = { showPairing = false },
+        )
+    }
+
     if (showScanner) {
         QrCameraScanner(
             onResult = { text ->
@@ -410,7 +424,26 @@ internal fun OwnServerSetup(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
-            Button(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { startScan() }) {
+            if (pendingPairing != null) {
+                // A Wi-Fi setup request is waiting for the owner's approval: nothing is set up yet.
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Waiting for approval", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "${pendingPairing.person.ifBlank { "New person" }} on ${pendingPairing.device}" +
+                                (if (pendingPairing.code.isNotBlank()) " · code ${pendingPairing.code}" else "") +
+                                ". Approve it in Telegram; the keyboard is not used or synced until then.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        TextButton(onClick = { showPairing = true }) { Text("Check now") }
+                    }
+                }
+            }
+            Button(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { showPairing = true }) {
+                Icon(Icons.Default.Wifi, contentDescription = null)
+                Text("  Find my server on Wi-Fi")
+            }
+            OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { startScan() }) {
                 Icon(Icons.Default.QrCodeScanner, contentDescription = null)
                 Text("  Scan QR code")
             }
